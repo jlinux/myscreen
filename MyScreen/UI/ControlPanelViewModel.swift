@@ -6,10 +6,11 @@ final class ControlPanelViewModel: ObservableObject {
     @Published var selectedDisplayID: CGDirectDisplayID?
     @Published var isActive: Bool = false
     @Published var edge: EdgePosition = .right
-    @Published var sizeType: String = "percentage"  // "pixels" or "percentage"
+    @Published var sizeType: String = "percentage"
     @Published var sizeValue: CGFloat = 30
     @Published var boundApp: AppBinding?
     @Published var showAppPicker: Bool = false
+    @Published var hotkeyConfig: HotkeyConfig = .defaultHotkey
 
     weak var screenManager: ScreenManager?
 
@@ -19,7 +20,7 @@ final class ControlPanelViewModel: ObservableObject {
             return
         }
         displays = sm.displayManager.displays
-        Log.info("ViewModel.refresh: \(displays.count) displays")
+        hotkeyConfig = AppConfig.shared.hotkey
 
         if selectedDisplayID == nil {
             selectedDisplayID = displays.first?.displayID
@@ -38,15 +39,11 @@ final class ControlPanelViewModel: ObservableObject {
                 sizeType = "percentage"
                 sizeValue = v * 100
             }
-            Log.info("ViewModel.refresh: displayID=\(displayID) isActive=\(isActive) edge=\(edge.rawValue) boundApp=\(boundApp?.displayName ?? "none")")
         }
     }
 
     func applyChanges() {
-        guard let displayID = selectedDisplayID else {
-            Log.info("applyChanges: no selectedDisplayID")
-            return
-        }
+        guard let displayID = selectedDisplayID else { return }
 
         let size: SizeSpec = sizeType == "pixels"
             ? .pixels(sizeValue)
@@ -58,19 +55,11 @@ final class ControlPanelViewModel: ObservableObject {
             boundApp: boundApp,
             isActive: isActive
         )
-
-        Log.info("applyChanges: displayID=\(displayID) isActive=\(isActive) edge=\(edge.rawValue) boundApp=\(boundApp?.displayName ?? "none")")
-
         AppConfig.shared.setLayout(layout)
-
-        if screenManager == nil {
-            Log.info("WARNING: screenManager is nil!")
-        }
         screenManager?.applyConfiguration()
     }
 
     func selectDisplay(_ id: CGDirectDisplayID) {
-        Log.info("selectDisplay: \(id)")
         selectedDisplayID = id
         refresh()
     }
@@ -86,7 +75,6 @@ final class ControlPanelViewModel: ObservableObject {
     }
 
     func bindApp(_ app: AppBinding) {
-        Log.info("bindApp: \(app.displayName) (\(app.bundleIdentifier))")
         boundApp = app
         showAppPicker = false
         applyChanges()
@@ -95,5 +83,11 @@ final class ControlPanelViewModel: ObservableObject {
     func unbindApp() {
         boundApp = nil
         applyChanges()
+    }
+
+    func updateHotkey(_ config: HotkeyConfig) {
+        Log.info("updateHotkey: \(config.displayString)")
+        hotkeyConfig = config
+        screenManager?.hotkeyManager.updateHotkey(config)
     }
 }

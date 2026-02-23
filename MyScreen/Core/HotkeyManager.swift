@@ -1,5 +1,6 @@
 import CoreGraphics
 import Carbon
+import AppKit
 
 final class HotkeyManager {
     typealias HotkeyHandler = () -> Void
@@ -7,10 +8,13 @@ final class HotkeyManager {
     private var eventTap: CFMachPort?
     private var runLoopSource: CFRunLoopSource?
     private var handler: HotkeyHandler?
+    private var hotkeyConfig: HotkeyConfig = .defaultHotkey
 
-    /// Register ⌘⌥M as global hotkey.
-    func register(handler: @escaping HotkeyHandler) {
+    func register(config: HotkeyConfig = AppConfig.shared.hotkey, handler: @escaping HotkeyHandler) {
+        if eventTap != nil { unregister() }
+
         self.handler = handler
+        self.hotkeyConfig = config
 
         let eventMask: CGEventMask = (1 << CGEventType.keyDown.rawValue)
 
@@ -26,7 +30,7 @@ final class HotkeyManager {
             },
             userInfo: Unmanaged.passUnretained(self).toOpaque()
         ) else {
-            NSLog("MyScreen: Failed to create event tap. Is Accessibility permission granted?")
+            Log.info("Failed to create event tap. Is Accessibility permission granted?")
             return
         }
 
@@ -34,6 +38,15 @@ final class HotkeyManager {
         runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
         CFRunLoopAddSource(CFRunLoopGetMain(), runLoopSource, .commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
+        Log.info("Hotkey registered: \(config.displayString)")
+    }
+
+    func updateHotkey(_ config: HotkeyConfig) {
+        guard let handler = self.handler else { return }
+        hotkeyConfig = config
+        AppConfig.shared.hotkey = config
+        AppConfig.shared.save()
+        register(config: config, handler: handler)
     }
 
     func unregister() {
@@ -49,7 +62,6 @@ final class HotkeyManager {
     }
 
     private func handleEvent(proxy: CGEventTapProxy, type: CGEventType, event: CGEvent) -> Unmanaged<CGEvent>? {
-        // Handle tap disabled by timeout — re-enable
         if type == .tapDisabledByTimeout {
             if let tap = eventTap {
                 CGEvent.tapEnable(tap: tap, enable: true)
@@ -61,17 +73,16 @@ final class HotkeyManager {
             return Unmanaged.passRetained(event)
         }
 
-        let keyCode = event.getIntegerValueField(.keyboardEventKeycode)
+        let keyCode = UInt16(event.getIntegerValueField(.keyboardEventKeycode))
         let flags = event.flags
 
-        // ⌘⌥M: keyCode 46 = 'm', check for Command + Option
-        let requiredFlags: CGEventFlags = [.maskCommand, .maskAlternate]
-        let hasRequired = flags.contains(requiredFlags)
-        let noExtra = flags.intersection([.maskShift, .maskControl]).isEmpty
+        let requiredFlags = CGEventFlags(rawValue: hotkeyConfig.modifiers)
+        let modifierMask: CGEventFlags = [.maskCommand, .maskAlternate, .maskShift, .maskControl]
+        let activeModifiers = flags.intersection(modifierMask)
 
-        if keyCode == 46 && hasRequired && noExtra {
+        if keyCode == hotkeyConfig.keyCode && activeModifiers == requiredFlags {
             handler?()
-            return nil  // Swallow the event
+            return nil
         }
 
         return Unmanaged.passRetained(event)

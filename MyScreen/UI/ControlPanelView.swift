@@ -5,7 +5,6 @@ struct ControlPanelView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            // Header
             HStack {
                 Image(systemName: "rectangle.split.2x1")
                     .foregroundColor(.accentColor)
@@ -16,7 +15,6 @@ struct ControlPanelView: View {
 
             Divider()
 
-            // Display selector
             if viewModel.displays.count > 1 {
                 HStack {
                     Text("Display")
@@ -36,14 +34,12 @@ struct ControlPanelView: View {
                 }
             }
 
-            // Active toggle
             Toggle("Enable Reserved Area", isOn: Binding(
                 get: { viewModel.isActive },
                 set: { _ in viewModel.toggleActive() }
             ))
 
             if viewModel.isActive {
-                // Edge position
                 HStack {
                     Text("Position")
                         .font(.subheadline)
@@ -60,7 +56,6 @@ struct ControlPanelView: View {
                     .frame(width: 200)
                 }
 
-                // Size
                 HStack {
                     Text("Size")
                         .font(.subheadline)
@@ -93,7 +88,6 @@ struct ControlPanelView: View {
 
                 Divider()
 
-                // Bound app
                 HStack {
                     Text("Bound App")
                         .font(.subheadline)
@@ -116,20 +110,23 @@ struct ControlPanelView: View {
                     }
                     .controlSize(.small)
                 }
+
+                HStack {
+                    Image(systemName: "arrow.left.and.right")
+                        .font(.caption2)
+                    Text("Drag the divider line to resize")
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                }
             }
 
             Divider()
 
-            // Hotkey hint
-            HStack {
-                Image(systemName: "command")
-                Image(systemName: "option")
-                Text("M — Toggle reserved area")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
+            HotkeyRecorderView(
+                hotkeyConfig: $viewModel.hotkeyConfig,
+                onChange: { viewModel.updateHotkey($0) }
+            )
 
-            // Quit button
             HStack {
                 Spacer()
                 Button("Quit MyScreen") {

@@ -15,4 +15,4 @@ run: generate
 	open build/Debug/$(PROJECT_NAME).app
 
 clean:
-	rm -rf build DerivedData $(PROJECT_NAME).xcodeproj
+	rm -rf build/Debug build/MyScreen.build DerivedData $(PROJECT_NAME).xcodeproj
