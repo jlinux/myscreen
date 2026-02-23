@@ -115,31 +115,27 @@ private final class DividerView: NSView {
             NSRect(x: 0, y: bounds.height - lineWidth, width: bounds.width, height: lineWidth).fill()
         }
 
-        // Grip indicator (three short lines in center)
+        // Grip indicator (three dots in center)
         let gripColor = isDragging
             ? NSColor.controlAccentColor.withAlphaComponent(0.8)
             : NSColor.secondaryLabelColor.withAlphaComponent(0.5)
         gripColor.setFill()
 
+        let dotSize: CGFloat = 2
+        let spacing: CGFloat = 4
         if isHorizontalEdge {
-            let centerY = bounds.midY
-            let gripLength: CGFloat = 16
-            let gripThickness: CGFloat = 1.5
-            let spacing: CGFloat = 3
+            let cx = bounds.midX
+            let cy = bounds.midY
             for i in -1...1 {
-                let y = centerY + CGFloat(i) * spacing - gripThickness / 2
-                let x = (bounds.width - gripLength) / 2
-                NSBezierPath(roundedRect: NSRect(x: x, y: y, width: gripLength, height: gripThickness), xRadius: 0.75, yRadius: 0.75).fill()
+                let y = cy + CGFloat(i) * spacing - dotSize / 2
+                NSBezierPath(ovalIn: NSRect(x: cx - dotSize / 2, y: y, width: dotSize, height: dotSize)).fill()
             }
         } else {
-            let centerX = bounds.midX
-            let gripLength: CGFloat = 16
-            let gripThickness: CGFloat = 1.5
-            let spacing: CGFloat = 3
+            let cx = bounds.midX
+            let cy = bounds.midY
             for i in -1...1 {
-                let x = centerX + CGFloat(i) * spacing - gripThickness / 2
-                let y = (bounds.height - gripLength) / 2
-                NSBezierPath(roundedRect: NSRect(x: x, y: y, width: gripThickness, height: gripLength), xRadius: 0.75, yRadius: 0.75).fill()
+                let x = cx + CGFloat(i) * spacing - dotSize / 2
+                NSBezierPath(ovalIn: NSRect(x: x, y: cy - dotSize / 2, width: dotSize, height: dotSize)).fill()
             }
         }
     }
@@ -160,6 +156,7 @@ private final class DividerView: NSView {
         isDragging = true
         dragStartPoint = NSEvent.mouseLocation
         dragStartSize = barrierWindow?.reservedAreaSize ?? 0
+        Log.info("DividerView mouseDown edge=\(edge.rawValue) startSize=\(dragStartSize)")
         needsDisplay = true
     }
 

@@ -172,21 +172,52 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     // MARK: - F-010: BarrierWindowDelegate
 
     func barrierWindow(_ window: BarrierWindow, didDragToSize newSize: CGFloat) {
-        guard let slotID = window.slotID else { return }
-        // Find which display this slot belongs to
-        guard let (displayID, layout) = findLayoutForSlot(slotID) else { return }
+        guard let slotID = window.slotID else {
+            Log.info("drag: slotID is nil")
+            return
+        }
+
+        // Find which display owns this slot
+        var foundDisplayID: CGDirectDisplayID?
+        var foundLayout: ScreenLayout?
+        for display in displayManager.displays {
+            var layout = AppConfig.shared.layout(for: display.displayID)
+            if layout.slot(for: slotID) != nil {
+                foundDisplayID = display.displayID
+                foundLayout = layout
+                break
+            }
+        }
+
+        guard let displayID = foundDisplayID, var updatedLayout = foundLayout else {
+            Log.info("drag: layout not found for slot \(slotID)")
+            return
+        }
         guard let display = displayManager.display(for: displayID) else { return }
 
-        var updatedLayout = layout
         guard var slot = updatedLayout.slot(for: slotID) else { return }
         slot.reservedArea.size = .pixels(newSize)
         updatedLayout.updateSlot(slot)
+
+        // Save without triggering full applyConfiguration
         AppConfig.shared.setLayout(updatedLayout)
 
         let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, slots: updatedLayout.slots)
-        guard let slotResult = result.slotResults[slotID] else { return }
+        guard let slotResult = result.slotResults[slotID] else {
+            Log.info("drag: slotResult not found for slot \(slotID)")
+            return
+        }
         window.reservedAreaSize = newSize
         window.updateFrame(cgRect: slotResult.dividerRect)
+
+        // Update other barrier windows too (their positions may shift)
+        for otherSlot in updatedLayout.slots where otherSlot.id != slotID && otherSlot.isActive {
+            if let otherResult = result.slotResults[otherSlot.id], let otherBarrier = barrierWindows[otherSlot.id] {
+                let otherSize = reservedSizeForSlot(otherSlot, rect: otherResult.reservedRect)
+                otherBarrier.reservedAreaSize = otherSize
+                otherBarrier.updateFrame(cgRect: otherResult.dividerRect)
+            }
+        }
 
         if let boundApp = slot.boundApp {
             moveBoundApp(bundleIdentifier: boundApp.bundleIdentifier, to: slotResult.reservedRect)
@@ -220,7 +251,9 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
                 guard let boundApp = slot.boundApp, let slotResult = result.slotResults[slot.id] else { continue }
                 let axWindows = WindowController.windows(for: boundApp.bundleIdentifier)
                 for window in axWindows {
-                    guard WindowController.isMovable(window), let currentFrame = WindowController.getFrame(window) else { continue }
+                    guard WindowController.isMovable(window),
+                          WindowController.isMainWindow(window),
+                          let currentFrame = WindowController.getFrame(window) else { continue }
                     if !rectsApproximatelyEqual(currentFrame, slotResult.reservedRect, tolerance: 5) {
                         WindowController.setFrame(window, to: slotResult.reservedRect)
                     }
@@ -234,16 +267,6 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     }
 
     // MARK: - Helpers
-
-    private func findLayoutForSlot(_ slotID: UUID) -> (CGDirectDisplayID, ScreenLayout)? {
-        let allLayouts = AppConfig.shared.layouts
-        for (displayID, layout) in allLayouts {
-            if layout.slots.contains(where: { $0.id == slotID }) {
-                return (displayID, layout)
-            }
-        }
-        return nil
-    }
 
     private func reservedSizeForSlot(_ slot: ReservedSlot, rect: CGRect) -> CGFloat {
         (slot.reservedArea.edge == .left || slot.reservedArea.edge == .right) ? rect.width : rect.height
@@ -259,7 +282,8 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private func moveBoundApp(bundleIdentifier: String, to rect: CGRect) {
         let axWindows = WindowController.windows(for: bundleIdentifier)
         for window in axWindows {
-            guard WindowController.isMovable(window) else { continue }
+            guard WindowController.isMovable(window),
+                  WindowController.isMainWindow(window) else { continue }
             WindowController.setFrame(window, to: rect)
         }
     }

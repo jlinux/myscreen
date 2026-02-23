@@ -76,6 +76,9 @@ enum WorkAreaConstraint {
 
             guard windowInfo.isOnScreen else { continue }
 
+            // Skip small windows (popups, tooltips, input method candidates, etc.)
+            if windowInfo.frame.width < 150 || windowInfo.frame.height < 100 { continue }
+
             guard let newFrame = constrainedFrame(
                 windowFrame: windowInfo.frame,
                 workArea: workArea,
@@ -84,7 +87,8 @@ enum WorkAreaConstraint {
 
             let axWindows = WindowController.windows(for: windowInfo.ownerPID)
             for axWindow in axWindows {
-                guard let frame = WindowController.getFrame(axWindow) else { continue }
+                guard WindowController.isMainWindow(axWindow),
+                      let frame = WindowController.getFrame(axWindow) else { continue }
                 if abs(frame.origin.x - windowInfo.frame.origin.x) < 5 &&
                    abs(frame.origin.y - windowInfo.frame.origin.y) < 5 {
                     WindowController.setFrame(axWindow, to: newFrame)

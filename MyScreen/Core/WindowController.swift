@@ -115,4 +115,18 @@ enum WindowController {
     static func isMovable(_ window: AXUIElement) -> Bool {
         return getPosition(window) != nil && getSize(window) != nil
     }
+
+    /// Check if a window is a main/standard window (not a popup, dialog, or helper).
+    /// Returns true for AXWindow role. Skips menus, popovers, sheets, etc.
+    static func isMainWindow(_ window: AXUIElement) -> Bool {
+        guard let role = getRole(window), role == "AXWindow" else { return false }
+        // Allow standard windows and dialogs, skip floating/system windows
+        let subrole = getSubrole(window)
+        // nil subrole is OK (some apps don't set it)
+        if let subrole = subrole {
+            let allowedSubroles: Set<String> = ["AXStandardWindow", "AXDialog"]
+            return allowedSubroles.contains(subrole)
+        }
+        return true
+    }
 }
