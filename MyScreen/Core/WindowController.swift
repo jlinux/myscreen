@@ -111,6 +111,14 @@ enum WindowController {
         return subroleRef as? String
     }
 
+    /// Check if a window is in full-screen mode.
+    static func isFullScreen(_ window: AXUIElement) -> Bool {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &value)
+        guard result == .success else { return false }
+        return (value as? Bool) == true
+    }
+
     /// Check if a window is movable (has position + size attributes).
     static func isMovable(_ window: AXUIElement) -> Bool {
         return getPosition(window) != nil && getSize(window) != nil

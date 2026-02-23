@@ -11,6 +11,8 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
     private var constrainDebounceTimer: Timer?
     private let animationDuration: TimeInterval = 0.3
+    private var spaceChangeObserver: NSObjectProtocol?
+    private var appActivationObserver: NSObjectProtocol?
 
     func start() {
         Log.info("ScreenManager starting")
@@ -22,11 +24,13 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         hotkeyManager.register { [weak self] in
             self?.toggleVisibility()
         }
+        startFullScreenMonitoring()
     }
 
     func stop() {
         constrainDebounceTimer?.invalidate()
         constrainDebounceTimer = nil
+        stopFullScreenMonitoring()
         windowMonitor.stop()
         hotkeyManager.unregister()
         removeAllBarrierWindows()
@@ -269,6 +273,89 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
     func displayManagerDidDetectChange(_ manager: DisplayManager) {
         applyConfiguration()
+    }
+
+    // MARK: - Full-Screen Detection
+
+    private func startFullScreenMonitoring() {
+        spaceChangeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.activeSpaceDidChangeNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            // Delay to allow the full-screen transition to complete and AXFullScreen to update
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
+                self?.checkFullScreenState()
+            }
+        }
+        appActivationObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didActivateApplicationNotification,
+            object: nil, queue: .main
+        ) { [weak self] _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                self?.checkFullScreenState()
+            }
+        }
+    }
+
+    private func stopFullScreenMonitoring() {
+        if let obs = spaceChangeObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
+        if let obs = appActivationObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
+        spaceChangeObserver = nil
+        appActivationObserver = nil
+    }
+
+    private func checkFullScreenState() {
+        guard !isHidden else { return }
+
+        let fullScreen = isFrontmostWindowFullScreen()
+        Log.info("checkFullScreenState: fullScreen=\(fullScreen)")
+
+        if fullScreen {
+            for (_, barrier) in barrierWindows { barrier.orderOut(nil) }
+        } else {
+            for (_, barrier) in barrierWindows { barrier.orderFront(nil) }
+        }
+    }
+
+    private func isFrontmostWindowFullScreen() -> Bool {
+        guard let frontmostApp = NSWorkspace.shared.frontmostApplication else { return false }
+        if frontmostApp.bundleIdentifier == ownBundleID { return false }
+
+        let pid = frontmostApp.processIdentifier
+        let windows = WindowController.windows(for: pid)
+
+        // Method 1: Check AXFullScreen attribute
+        if windows.contains(where: { WindowController.isFullScreen($0) }) {
+            Log.info("fullscreen detected via AXFullScreen for \(frontmostApp.bundleIdentifier ?? "?")")
+            return true
+        }
+
+        // Method 2: Fallback — check if any window covers the entire screen
+        for window in windows {
+            guard WindowController.isMainWindow(window),
+                  let frame = WindowController.getFrame(window) else { continue }
+            for screen in NSScreen.screens {
+                let screenCG = screenToCG(screen.frame)
+                if frame.width >= screenCG.width && frame.height >= screenCG.height {
+                    Log.info("fullscreen detected via frame size for \(frontmostApp.bundleIdentifier ?? "?")")
+                    return true
+                }
+            }
+        }
+
+        return false
+    }
+
+    /// Convert NSScreen frame (bottom-left origin) to CG frame (top-left origin).
+    private func screenToCG(_ nsFrame: NSRect) -> CGRect {
+        guard let mainScreen = NSScreen.screens.first else { return nsFrame }
+        let mainHeight = mainScreen.frame.height
+        return CGRect(
+            x: nsFrame.origin.x,
+            y: mainHeight - nsFrame.origin.y - nsFrame.height,
+            width: nsFrame.width,
+            height: nsFrame.height
+        )
     }
 
     // MARK: - Helpers
