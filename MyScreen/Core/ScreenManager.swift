@@ -238,6 +238,8 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     }
 
     private func handleWindowChange() {
+        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
             let activeSlots = layout.slots.filter { $0.isActive }
@@ -249,6 +251,9 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
             for slot in activeSlots {
                 guard let boundApp = slot.boundApp, let slotResult = result.slotResults[slot.id] else { continue }
+                // Skip repositioning if the bound app is frontmost — the user may be
+                // interacting with it (typing with IME, using menus, etc.)
+                if frontmostBundleID == boundApp.bundleIdentifier { continue }
                 let axWindows = WindowController.windows(for: boundApp.bundleIdentifier)
                 for window in axWindows {
                     guard WindowController.isMovable(window),
