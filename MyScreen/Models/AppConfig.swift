@@ -38,30 +38,51 @@ final class AppConfig {
     static let shared = AppConfig()
 
     private let key = "com.myscreen.config"
+    private let queue = DispatchQueue(label: "com.myscreen.config.queue")
 
-    var layouts: [CGDirectDisplayID: ScreenLayout] = [:]
-    var globalHotkeyEnabled: Bool = true
-    var hotkey: HotkeyConfig = .defaultHotkey
+    private var _layouts: [CGDirectDisplayID: ScreenLayout] = [:]
+    private var _globalHotkeyEnabled: Bool = true
+    private var _hotkey: HotkeyConfig = .defaultHotkey
+
+    var layouts: [CGDirectDisplayID: ScreenLayout] {
+        get { queue.sync { _layouts } }
+        set { queue.sync { _layouts = newValue } }
+    }
+    var globalHotkeyEnabled: Bool {
+        get { queue.sync { _globalHotkeyEnabled } }
+        set { queue.sync { _globalHotkeyEnabled = newValue } }
+    }
+    var hotkey: HotkeyConfig {
+        get { queue.sync { _hotkey } }
+        set { queue.sync { _hotkey = newValue } }
+    }
 
     private init() {
         load()
     }
 
     func layout(for displayID: CGDirectDisplayID) -> ScreenLayout {
-        layouts[displayID] ?? .defaultLayout(for: displayID)
+        queue.sync { _layouts[displayID] ?? .defaultLayout(for: displayID) }
     }
 
     func setLayout(_ layout: ScreenLayout) {
-        layouts[layout.displayID] = layout
+        queue.sync { _layouts[layout.displayID] = layout }
         save()
     }
 
     // MARK: - Persistence
 
+    var isScreenHidden: Bool {
+        get { queue.sync { _isScreenHidden } }
+        set { queue.sync { _isScreenHidden = newValue } }
+    }
+    private var _isScreenHidden: Bool = false
+
     private struct StoredConfig: Codable {
         var layouts: [ScreenLayoutEntry]
         var globalHotkeyEnabled: Bool
         var hotkey: HotkeyConfig?
+        var isScreenHidden: Bool?
     }
 
     private struct ScreenLayoutEntry: Codable {
@@ -72,19 +93,22 @@ final class AppConfig {
     }
 
     func save() {
-        let entries = layouts.values.map { layout in
-            ScreenLayoutEntry(
-                displayID: layout.displayID,
-                reservedArea: layout.reservedArea,
-                boundApp: layout.boundApp,
-                isActive: layout.isActive
+        let stored: StoredConfig = queue.sync {
+            let entries = _layouts.values.map { layout in
+                ScreenLayoutEntry(
+                    displayID: layout.displayID,
+                    reservedArea: layout.reservedArea,
+                    boundApp: layout.boundApp,
+                    isActive: layout.isActive
+                )
+            }
+            return StoredConfig(
+                layouts: entries,
+                globalHotkeyEnabled: _globalHotkeyEnabled,
+                hotkey: _hotkey,
+                isScreenHidden: _isScreenHidden
             )
         }
-        let stored = StoredConfig(
-            layouts: entries,
-            globalHotkeyEnabled: globalHotkeyEnabled,
-            hotkey: hotkey
-        )
         if let data = try? JSONEncoder().encode(stored) {
             UserDefaults.standard.set(data, forKey: key)
         }
@@ -95,17 +119,20 @@ final class AppConfig {
               let stored = try? JSONDecoder().decode(StoredConfig.self, from: data) else {
             return
         }
-        globalHotkeyEnabled = stored.globalHotkeyEnabled
-        hotkey = stored.hotkey ?? .defaultHotkey
-        layouts = [:]
-        for entry in stored.layouts {
-            let layout = ScreenLayout(
-                displayID: entry.displayID,
-                reservedArea: entry.reservedArea,
-                boundApp: entry.boundApp,
-                isActive: entry.isActive
-            )
-            layouts[entry.displayID] = layout
+        queue.sync {
+            _globalHotkeyEnabled = stored.globalHotkeyEnabled
+            _hotkey = stored.hotkey ?? .defaultHotkey
+            _isScreenHidden = stored.isScreenHidden ?? false
+            _layouts = [:]
+            for entry in stored.layouts {
+                let layout = ScreenLayout(
+                    displayID: entry.displayID,
+                    reservedArea: entry.reservedArea,
+                    boundApp: entry.boundApp,
+                    isActive: entry.isActive
+                )
+                _layouts[entry.displayID] = layout
+            }
         }
     }
 }

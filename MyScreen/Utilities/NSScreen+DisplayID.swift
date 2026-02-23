@@ -8,10 +8,12 @@ extension NSScreen {
     }
 
     /// Returns the screen frame in CG coordinates (top-left origin).
+    /// Note: NSScreen.screens.first is always the primary display per Apple docs.
     var cgFrame: CGRect {
-        // NSScreen.frame uses bottom-left origin. The main screen's origin is (0, 0) in NS coords.
-        // In CG coords the main screen origin is (0, 0) at top-left.
-        guard let mainScreen = NSScreen.screens.first else { return frame }
+        guard let mainScreen = NSScreen.screens.first else {
+            Log.info("NSScreen.screens is empty in cgFrame")
+            return frame
+        }
         let mainHeight = mainScreen.frame.height
         return CGRect(
             x: frame.origin.x,
@@ -23,7 +25,10 @@ extension NSScreen {
 
     /// Visible frame (excluding menu bar and dock) in CG coordinates.
     var cgVisibleFrame: CGRect {
-        guard let mainScreen = NSScreen.screens.first else { return visibleFrame }
+        guard let mainScreen = NSScreen.screens.first else {
+            Log.info("NSScreen.screens is empty in cgVisibleFrame")
+            return visibleFrame
+        }
         let mainHeight = mainScreen.frame.height
         return CGRect(
             x: visibleFrame.origin.x,

@@ -14,6 +14,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
     func start() {
         Log.info("ScreenManager starting")
+        isHidden = AppConfig.shared.isScreenHidden
         displayManager.delegate = self
         windowMonitor.delegate = self
         applyConfiguration()
@@ -78,6 +79,8 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
     func toggleVisibility() {
         isHidden.toggle()
+        AppConfig.shared.isScreenHidden = isHidden
+        AppConfig.shared.save()
         Log.info("toggleVisibility, isHidden=\(isHidden)")
         if isHidden { animateHide() } else { animateShow() }
     }
