@@ -75,14 +75,20 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
             }
 
             if !isHidden {
+                // Constrain immediately and again after a short delay for windows that move later
                 let workArea = result.workAreaRect
                 let reservedAreas = buildReservedAreas(layout: layout, result: result)
+                let excluded = excludedBundleIDs()
+                constrainWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: excluded)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     guard let self = self else { return }
-                    self.constrainWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: self.excludedBundleIDs())
+                    self.constrainWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: excluded)
                 }
             }
         }
+
+        // Boost polling so subsequent window movements are caught quickly
+        windowMonitor.boostPolling()
     }
 
     // MARK: - F-014: Animated Visibility Toggle
