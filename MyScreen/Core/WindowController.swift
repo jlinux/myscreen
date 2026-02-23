@@ -28,9 +28,11 @@ enum WindowController {
     static func getPosition(_ window: AXUIElement) -> CGPoint? {
         var positionRef: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(window, kAXPositionAttribute as CFString, &positionRef)
-        guard result == .success else { return nil }
+        guard result == .success, let ref = positionRef else { return nil }
+        guard CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
         var point = CGPoint.zero
-        AXValueGetValue(positionRef as! AXValue, .cgPoint, &point)
+        // swiftlint:disable:next force_cast
+        AXValueGetValue(ref as! AXValue, .cgPoint, &point)
         return point
     }
 
@@ -38,9 +40,11 @@ enum WindowController {
     static func getSize(_ window: AXUIElement) -> CGSize? {
         var sizeRef: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(window, kAXSizeAttribute as CFString, &sizeRef)
-        guard result == .success else { return nil }
+        guard result == .success, let ref = sizeRef else { return nil }
+        guard CFGetTypeID(ref) == AXValueGetTypeID() else { return nil }
         var size = CGSize.zero
-        AXValueGetValue(sizeRef as! AXValue, .cgSize, &size)
+        // swiftlint:disable:next force_cast
+        AXValueGetValue(ref as! AXValue, .cgSize, &size)
         return size
     }
 

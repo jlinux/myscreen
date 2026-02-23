@@ -55,6 +55,7 @@ final class HotkeyManager {
         }
         if let tap = eventTap {
             CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
         }
         eventTap = nil
         runLoopSource = nil

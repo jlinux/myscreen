@@ -14,6 +14,7 @@ final class WindowMonitor {
 
     private var pollTimer: Timer?
     private var observers: [pid_t: AXObserver] = [:]
+    private var observerRefcons: [pid_t: UnsafeMutableRawPointer] = [:]
     private var monitoredBundleIDs: Set<String> = []
     private var lastWindowSnapshot: [CGWindowID: CGRect] = [:]
 
@@ -108,7 +109,8 @@ final class WindowMonitor {
         let callback: AXObserverCallback = { _, element, notification, refcon in
             guard let refcon = refcon else { return }
             let monitor = Unmanaged<WindowMonitor>.fromOpaque(refcon).takeUnretainedValue()
-            DispatchQueue.main.async {
+            DispatchQueue.main.async { [weak monitor] in
+                guard let monitor = monitor else { return }
                 monitor.delegate?.windowMonitorDidDetectChange(monitor)
             }
         }
@@ -116,7 +118,7 @@ final class WindowMonitor {
         let result = AXObserverCreate(pid, callback, &observer)
         guard result == .success, let obs = observer else { return }
 
-        let refcon = Unmanaged.passUnretained(self).toOpaque()
+        let refcon = Unmanaged.passRetained(self).toOpaque()
         let appElement = AXUIElementCreateApplication(pid)
 
         let notifications: [CFString] = [
@@ -138,6 +140,7 @@ final class WindowMonitor {
         )
 
         observers[pid] = obs
+        observerRefcons[pid] = refcon
     }
 
     private func removeObserver(for pid: pid_t) {
@@ -147,6 +150,10 @@ final class WindowMonitor {
             AXObserverGetRunLoopSource(obs),
             .defaultMode
         )
+        // Release the retained self reference
+        if let refcon = observerRefcons.removeValue(forKey: pid) {
+            Unmanaged<WindowMonitor>.fromOpaque(refcon).release()
+        }
     }
 
     private func removeAllObservers() {

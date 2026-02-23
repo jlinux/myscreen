@@ -176,7 +176,8 @@ private final class DividerView: NSView {
             delta = dragStartPoint.y - currentPoint.y
         }
         let newSize = max(100, dragStartSize + delta)
-        barrierWindow?.resizeDelegate?.barrierWindow(barrierWindow!, didDragToSize: newSize)
+        guard let window = barrierWindow else { return }
+        window.resizeDelegate?.barrierWindow(window, didDragToSize: newSize)
     }
 
     override func mouseUp(with event: NSEvent) {

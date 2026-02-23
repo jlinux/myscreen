@@ -24,6 +24,8 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     }
 
     func stop() {
+        constrainDebounceTimer?.invalidate()
+        constrainDebounceTimer = nil
         windowMonitor.stop()
         hotkeyManager.unregister()
         removeAllBarrierWindows()
