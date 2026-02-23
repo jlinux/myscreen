@@ -9,6 +9,8 @@ final class BarrierWindow: NSWindow {
     var edge: EdgePosition = .right
     /// The actual reserved area size (not the divider strip size).
     var reservedAreaSize: CGFloat = 0
+    /// The slot UUID this barrier window belongs to.
+    var slotID: UUID?
 
     init(frame: CGRect, edge: EdgePosition = .right) {
         let nsRect = Self.cgToNS(frame)

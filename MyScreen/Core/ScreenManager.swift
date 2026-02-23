@@ -5,7 +5,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     let displayManager = DisplayManager()
     private let windowMonitor = WindowMonitor()
     let hotkeyManager = HotkeyManager()
-    private var barrierWindows: [CGDirectDisplayID: BarrierWindow] = [:]
+    private var barrierWindows: [UUID: BarrierWindow] = [:]  // keyed by slot UUID
     private(set) var isHidden = false
     private let ownBundleID = Bundle.main.bundleIdentifier ?? "com.myscreen.app"
 
@@ -38,38 +38,44 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
-            guard layout.isActive else { continue }
+            let activeSlots = layout.slots.filter { $0.isActive }
+            guard !activeSlots.isEmpty else { continue }
 
-            let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: layout.reservedArea)
+            let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, slots: layout.slots)
 
             if !isHidden {
-                let reservedSize = (layout.reservedArea.edge == .left || layout.reservedArea.edge == .right) ? result.reservedRect.width : result.reservedRect.height
-                let barrier = BarrierWindow(frame: result.dividerRect, edge: layout.reservedArea.edge)
-                barrier.reservedAreaSize = reservedSize
-                barrier.resizeDelegate = self
-                barrier.orderFront(nil)
-                barrierWindows[display.displayID] = barrier
+                for slot in activeSlots {
+                    guard let slotResult = result.slotResults[slot.id] else { continue }
+                    let reservedSize = reservedSizeForSlot(slot, rect: slotResult.reservedRect)
+                    let barrier = BarrierWindow(frame: slotResult.dividerRect, edge: slot.reservedArea.edge)
+                    barrier.slotID = slot.id
+                    barrier.reservedAreaSize = reservedSize
+                    barrier.resizeDelegate = self
+                    barrier.orderFront(nil)
+                    barrierWindows[slot.id] = barrier
+                }
             }
 
-            if let boundApp = layout.boundApp {
-                windowMonitor.monitorApp(bundleIdentifier: boundApp.bundleIdentifier)
-                let apps = NSRunningApplication.runningApplications(withBundleIdentifier: boundApp.bundleIdentifier)
-                for app in apps { if app.isHidden { app.unhide() } }
+            for slot in activeSlots {
+                if let boundApp = slot.boundApp, let slotResult = result.slotResults[slot.id] {
+                    windowMonitor.monitorApp(bundleIdentifier: boundApp.bundleIdentifier)
+                    let apps = NSRunningApplication.runningApplications(withBundleIdentifier: boundApp.bundleIdentifier)
+                    for app in apps { if app.isHidden { app.unhide() } }
 
-                let targetRect = result.reservedRect
-                let bundleID = boundApp.bundleIdentifier
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                    self?.moveBoundApp(bundleIdentifier: bundleID, to: targetRect)
+                    let targetRect = slotResult.reservedRect
+                    let bundleID = boundApp.bundleIdentifier
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
+                        self?.moveBoundApp(bundleIdentifier: bundleID, to: targetRect)
+                    }
                 }
             }
 
             if !isHidden {
                 let workArea = result.workAreaRect
-                let reservedArea = result.reservedRect
-                let edge = layout.reservedArea.edge
+                let reservedAreas = buildReservedAreas(layout: layout, result: result)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     guard let self = self else { return }
-                    self.constrainWindows(workArea: workArea, reservedArea: reservedArea, edge: edge, excludedBundleIDs: self.excludedBundleIDs())
+                    self.constrainWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: self.excludedBundleIDs())
                 }
             }
         }
@@ -88,18 +94,20 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private func animateHide() {
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
-            guard layout.isActive else { continue }
+            let activeSlots = layout.slots.filter { $0.isActive }
+            guard !activeSlots.isEmpty else { continue }
 
-            if let barrier = barrierWindows[display.displayID] {
-                let offscreen = offscreenRect(for: display, edge: layout.reservedArea.edge, layout: layout)
-                barrier.animateFrame(to: offscreen, duration: animationDuration) {
-                    barrier.orderOut(nil)
+            for slot in activeSlots {
+                if let barrier = barrierWindows[slot.id] {
+                    let offscreen = offscreenDividerRect(for: display, slot: slot)
+                    barrier.animateFrame(to: offscreen, duration: animationDuration) {
+                        barrier.orderOut(nil)
+                    }
                 }
-            }
-
-            if let boundApp = layout.boundApp {
-                DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration * 0.5) {
-                    self.hideBoundApp(bundleIdentifier: boundApp.bundleIdentifier)
+                if let boundApp = slot.boundApp {
+                    DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration * 0.5) { [weak self] in
+                        self?.hideBoundApp(bundleIdentifier: boundApp.bundleIdentifier)
+                    }
                 }
             }
         }
@@ -108,43 +116,48 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private func animateShow() {
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
-            guard layout.isActive else { continue }
+            let activeSlots = layout.slots.filter { $0.isActive }
+            guard !activeSlots.isEmpty else { continue }
 
-            let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: layout.reservedArea)
-            let reservedSize = (layout.reservedArea.edge == .left || layout.reservedArea.edge == .right) ? result.reservedRect.width : result.reservedRect.height
-            let startRect = offscreenRect(for: display, edge: layout.reservedArea.edge, layout: layout)
-            let barrier = BarrierWindow(frame: startRect, edge: layout.reservedArea.edge)
-            barrier.reservedAreaSize = reservedSize
-            barrier.resizeDelegate = self
-            barrier.orderFront(nil)
-            barrierWindows[display.displayID] = barrier
-            barrier.animateFrame(to: result.dividerRect, duration: animationDuration)
+            let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, slots: layout.slots)
 
-            if let boundApp = layout.boundApp {
-                windowMonitor.monitorApp(bundleIdentifier: boundApp.bundleIdentifier)
-                let apps = NSRunningApplication.runningApplications(withBundleIdentifier: boundApp.bundleIdentifier)
-                for app in apps { if app.isHidden { app.unhide() } }
-                let targetRect = result.reservedRect
-                let bundleID = boundApp.bundleIdentifier
-                DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration * 0.3) { [weak self] in
-                    self?.moveBoundApp(bundleIdentifier: bundleID, to: targetRect)
+            for slot in activeSlots {
+                guard let slotResult = result.slotResults[slot.id] else { continue }
+                let reservedSize = reservedSizeForSlot(slot, rect: slotResult.reservedRect)
+                let startRect = offscreenDividerRect(for: display, slot: slot)
+                let barrier = BarrierWindow(frame: startRect, edge: slot.reservedArea.edge)
+                barrier.slotID = slot.id
+                barrier.reservedAreaSize = reservedSize
+                barrier.resizeDelegate = self
+                barrier.orderFront(nil)
+                barrierWindows[slot.id] = barrier
+                barrier.animateFrame(to: slotResult.dividerRect, duration: animationDuration)
+
+                if let boundApp = slot.boundApp {
+                    windowMonitor.monitorApp(bundleIdentifier: boundApp.bundleIdentifier)
+                    let apps = NSRunningApplication.runningApplications(withBundleIdentifier: boundApp.bundleIdentifier)
+                    for app in apps { if app.isHidden { app.unhide() } }
+                    let targetRect = slotResult.reservedRect
+                    let bundleID = boundApp.bundleIdentifier
+                    DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration * 0.3) { [weak self] in
+                        self?.moveBoundApp(bundleIdentifier: bundleID, to: targetRect)
+                    }
                 }
             }
 
             let workArea = result.workAreaRect
-            let reservedArea = result.reservedRect
-            let edge = layout.reservedArea.edge
+            let reservedAreas = buildReservedAreas(layout: layout, result: result)
             DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration + 0.1) { [weak self] in
                 guard let self = self else { return }
-                self.constrainWindows(workArea: workArea, reservedArea: reservedArea, edge: edge, excludedBundleIDs: self.excludedBundleIDs())
+                self.constrainWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: self.excludedBundleIDs())
             }
         }
     }
 
-    private func offscreenRect(for display: DisplayInfo, edge: EdgePosition, layout: ScreenLayout) -> CGRect {
-        let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: layout.reservedArea)
-        let rect = result.dividerRect
-        switch edge {
+    private func offscreenDividerRect(for display: DisplayInfo, slot: ReservedSlot) -> CGRect {
+        let singleResult = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: slot.reservedArea)
+        let rect = singleResult.dividerRect
+        switch slot.reservedArea.edge {
         case .right:
             return CGRect(x: display.visibleFrame.maxX, y: rect.origin.y, width: rect.width, height: rect.height)
         case .left:
@@ -159,21 +172,28 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     // MARK: - F-010: BarrierWindowDelegate
 
     func barrierWindow(_ window: BarrierWindow, didDragToSize newSize: CGFloat) {
-        guard let (displayID, _) = barrierWindows.first(where: { $0.value === window }) else { return }
+        guard let slotID = window.slotID else { return }
+        // Find which display this slot belongs to
+        guard let (displayID, layout) = findLayoutForSlot(slotID) else { return }
         guard let display = displayManager.display(for: displayID) else { return }
 
-        var layout = AppConfig.shared.layout(for: displayID)
-        layout.reservedArea.size = .pixels(newSize)
-        AppConfig.shared.setLayout(layout)
+        var updatedLayout = layout
+        guard var slot = updatedLayout.slot(for: slotID) else { return }
+        slot.reservedArea.size = .pixels(newSize)
+        updatedLayout.updateSlot(slot)
+        AppConfig.shared.setLayout(updatedLayout)
 
-        let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: layout.reservedArea)
+        let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, slots: updatedLayout.slots)
+        guard let slotResult = result.slotResults[slotID] else { return }
         window.reservedAreaSize = newSize
-        window.updateFrame(cgRect: result.dividerRect)
+        window.updateFrame(cgRect: slotResult.dividerRect)
 
-        if let boundApp = layout.boundApp {
-            moveBoundApp(bundleIdentifier: boundApp.bundleIdentifier, to: result.reservedRect)
+        if let boundApp = slot.boundApp {
+            moveBoundApp(bundleIdentifier: boundApp.bundleIdentifier, to: slotResult.reservedRect)
         }
-        constrainWindows(workArea: result.workAreaRect, reservedArea: result.reservedRect, edge: layout.reservedArea.edge, excludedBundleIDs: excludedBundleIDs())
+
+        let reservedAreas = buildReservedAreas(layout: updatedLayout, result: result)
+        constrainWindows(workArea: result.workAreaRect, reservedAreas: reservedAreas, excludedBundleIDs: excludedBundleIDs())
     }
 
     // MARK: - WindowMonitorDelegate
@@ -189,17 +209,20 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private func handleWindowChange() {
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
-            guard layout.isActive else { continue }
+            let activeSlots = layout.slots.filter { $0.isActive }
+            guard !activeSlots.isEmpty else { continue }
 
-            let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: layout.reservedArea)
-            constrainWindows(workArea: result.workAreaRect, reservedArea: result.reservedRect, edge: layout.reservedArea.edge, excludedBundleIDs: excludedBundleIDs())
+            let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, slots: layout.slots)
+            let reservedAreas = buildReservedAreas(layout: layout, result: result)
+            constrainWindows(workArea: result.workAreaRect, reservedAreas: reservedAreas, excludedBundleIDs: excludedBundleIDs())
 
-            if let boundApp = layout.boundApp {
+            for slot in activeSlots {
+                guard let boundApp = slot.boundApp, let slotResult = result.slotResults[slot.id] else { continue }
                 let axWindows = WindowController.windows(for: boundApp.bundleIdentifier)
                 for window in axWindows {
                     guard WindowController.isMovable(window), let currentFrame = WindowController.getFrame(window) else { continue }
-                    if !rectsApproximatelyEqual(currentFrame, result.reservedRect, tolerance: 5) {
-                        WindowController.setFrame(window, to: result.reservedRect)
+                    if !rectsApproximatelyEqual(currentFrame, slotResult.reservedRect, tolerance: 5) {
+                        WindowController.setFrame(window, to: slotResult.reservedRect)
                     }
                 }
             }
@@ -208,6 +231,29 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
     func displayManagerDidDetectChange(_ manager: DisplayManager) {
         applyConfiguration()
+    }
+
+    // MARK: - Helpers
+
+    private func findLayoutForSlot(_ slotID: UUID) -> (CGDirectDisplayID, ScreenLayout)? {
+        let allLayouts = AppConfig.shared.layouts
+        for (displayID, layout) in allLayouts {
+            if layout.slots.contains(where: { $0.id == slotID }) {
+                return (displayID, layout)
+            }
+        }
+        return nil
+    }
+
+    private func reservedSizeForSlot(_ slot: ReservedSlot, rect: CGRect) -> CGFloat {
+        (slot.reservedArea.edge == .left || slot.reservedArea.edge == .right) ? rect.width : rect.height
+    }
+
+    private func buildReservedAreas(layout: ScreenLayout, result: LayoutResult) -> [(rect: CGRect, edge: EdgePosition)] {
+        layout.slots.filter { $0.isActive }.compactMap { slot in
+            guard let slotResult = result.slotResults[slot.id] else { return nil }
+            return (rect: slotResult.reservedRect, edge: slot.reservedArea.edge)
+        }
     }
 
     private func moveBoundApp(bundleIdentifier: String, to rect: CGRect) {
@@ -223,15 +269,17 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         for app in apps { app.hide() }
     }
 
-    private func constrainWindows(workArea: CGRect, reservedArea: CGRect, edge: EdgePosition, excludedBundleIDs: Set<String>) {
-        WorkAreaConstraint.constrainAllWindows(workArea: workArea, reservedArea: reservedArea, edge: edge, excludedBundleIDs: excludedBundleIDs, ownBundleID: ownBundleID)
+    private func constrainWindows(workArea: CGRect, reservedAreas: [(rect: CGRect, edge: EdgePosition)], excludedBundleIDs: Set<String>) {
+        WorkAreaConstraint.constrainAllWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: excludedBundleIDs, ownBundleID: ownBundleID)
     }
 
     private func excludedBundleIDs() -> Set<String> {
         var excluded: Set<String> = [ownBundleID]
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
-            if let bundleID = layout.boundApp?.bundleIdentifier { excluded.insert(bundleID) }
+            for slot in layout.slots {
+                if let bundleID = slot.boundApp?.bundleIdentifier { excluded.insert(bundleID) }
+            }
         }
         return excluded
     }

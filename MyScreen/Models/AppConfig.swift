@@ -43,6 +43,7 @@ final class AppConfig {
     private var _layouts: [CGDirectDisplayID: ScreenLayout] = [:]
     private var _globalHotkeyEnabled: Bool = true
     private var _hotkey: HotkeyConfig = .defaultHotkey
+    private var _isScreenHidden: Bool = false
 
     var layouts: [CGDirectDisplayID: ScreenLayout] {
         get { queue.sync { _layouts } }
@@ -55,6 +56,10 @@ final class AppConfig {
     var hotkey: HotkeyConfig {
         get { queue.sync { _hotkey } }
         set { queue.sync { _hotkey = newValue } }
+    }
+    var isScreenHidden: Bool {
+        get { queue.sync { _isScreenHidden } }
+        set { queue.sync { _isScreenHidden = newValue } }
     }
 
     private init() {
@@ -72,35 +77,22 @@ final class AppConfig {
 
     // MARK: - Persistence
 
-    var isScreenHidden: Bool {
-        get { queue.sync { _isScreenHidden } }
-        set { queue.sync { _isScreenHidden = newValue } }
-    }
-    private var _isScreenHidden: Bool = false
-
     private struct StoredConfig: Codable {
-        var layouts: [ScreenLayoutEntry]
+        var layouts: [StoredScreenLayout]
         var globalHotkeyEnabled: Bool
         var hotkey: HotkeyConfig?
         var isScreenHidden: Bool?
     }
 
-    private struct ScreenLayoutEntry: Codable {
+    private struct StoredScreenLayout: Codable {
         var displayID: UInt32
-        var reservedArea: ReservedArea
-        var boundApp: AppBinding?
-        var isActive: Bool
+        var slots: [ReservedSlot]
     }
 
     func save() {
         let stored: StoredConfig = queue.sync {
             let entries = _layouts.values.map { layout in
-                ScreenLayoutEntry(
-                    displayID: layout.displayID,
-                    reservedArea: layout.reservedArea,
-                    boundApp: layout.boundApp,
-                    isActive: layout.isActive
-                )
+                StoredScreenLayout(displayID: layout.displayID, slots: layout.slots)
             }
             return StoredConfig(
                 layouts: entries,
@@ -125,12 +117,7 @@ final class AppConfig {
             _isScreenHidden = stored.isScreenHidden ?? false
             _layouts = [:]
             for entry in stored.layouts {
-                let layout = ScreenLayout(
-                    displayID: entry.displayID,
-                    reservedArea: entry.reservedArea,
-                    boundApp: entry.boundApp,
-                    isActive: entry.isActive
-                )
+                let layout = ScreenLayout(displayID: entry.displayID, slots: entry.slots)
                 _layouts[entry.displayID] = layout
             }
         }
