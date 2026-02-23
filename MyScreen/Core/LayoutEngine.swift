@@ -5,6 +5,8 @@ import CoreGraphics
 struct LayoutResult {
     let reservedRect: CGRect
     let workAreaRect: CGRect
+    /// Thin strip rect along the divider edge for the barrier window (drag handle).
+    let dividerRect: CGRect
 }
 
 enum LayoutEngine {
@@ -44,6 +46,19 @@ enum LayoutEngine {
             workAreaRect = CGRect(x: originX, y: originY, width: totalWidth, height: totalHeight - h)
         }
 
-        return LayoutResult(reservedRect: reservedRect, workAreaRect: workAreaRect)
+        let dividerWidth: CGFloat = 8
+        let dividerRect: CGRect
+        switch area.edge {
+        case .left:
+            dividerRect = CGRect(x: reservedRect.maxX - dividerWidth, y: reservedRect.origin.y, width: dividerWidth, height: reservedRect.height)
+        case .right:
+            dividerRect = CGRect(x: reservedRect.origin.x, y: reservedRect.origin.y, width: dividerWidth, height: reservedRect.height)
+        case .top:
+            dividerRect = CGRect(x: reservedRect.origin.x, y: reservedRect.maxY - dividerWidth, width: reservedRect.width, height: dividerWidth)
+        case .bottom:
+            dividerRect = CGRect(x: reservedRect.origin.x, y: reservedRect.origin.y, width: reservedRect.width, height: dividerWidth)
+        }
+
+        return LayoutResult(reservedRect: reservedRect, workAreaRect: workAreaRect, dividerRect: dividerRect)
     }
 }

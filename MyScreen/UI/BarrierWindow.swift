@@ -7,6 +7,8 @@ protocol BarrierWindowDelegate: AnyObject {
 final class BarrierWindow: NSWindow {
     weak var resizeDelegate: BarrierWindowDelegate?
     var edge: EdgePosition = .right
+    /// The actual reserved area size (not the divider strip size).
+    var reservedAreaSize: CGFloat = 0
 
     init(frame: CGRect, edge: EdgePosition = .right) {
         let nsRect = Self.cgToNS(frame)
@@ -66,7 +68,6 @@ private final class DividerView: NSView {
     var edge: EdgePosition = .right
     weak var barrierWindow: BarrierWindow?
 
-    private let dragHandleWidth: CGFloat = 8
     private var isDragging = false
     private var dragStartPoint: NSPoint = .zero
     private var dragStartSize: CGFloat = 0
@@ -76,7 +77,7 @@ private final class DividerView: NSView {
         super.updateTrackingAreas()
         if let existing = trackingArea { removeTrackingArea(existing) }
         let area = NSTrackingArea(
-            rect: dragHandleRect,
+            rect: bounds,
             options: [.mouseEnteredAndExited, .activeAlways],
             owner: self,
             userInfo: nil
@@ -85,29 +86,22 @@ private final class DividerView: NSView {
         addTrackingArea(area)
     }
 
-    private var dragHandleRect: NSRect {
-        switch edge {
-        case .right:
-            return NSRect(x: 0, y: 0, width: dragHandleWidth, height: bounds.height)
-        case .left:
-            return NSRect(x: bounds.width - dragHandleWidth, y: 0, width: dragHandleWidth, height: bounds.height)
-        case .top:
-            return NSRect(x: 0, y: 0, width: bounds.width, height: dragHandleWidth)
-        case .bottom:
-            return NSRect(x: 0, y: bounds.height - dragHandleWidth, width: bounds.width, height: dragHandleWidth)
-        }
-    }
-
     private var isHorizontalEdge: Bool {
         edge == .left || edge == .right
     }
 
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.controlBackgroundColor.withAlphaComponent(0.05).setFill()
+        // Background
+        if isDragging {
+            NSColor.controlAccentColor.withAlphaComponent(0.25).setFill()
+        } else {
+            NSColor.controlBackgroundColor.withAlphaComponent(0.6).setFill()
+        }
         bounds.fill()
 
-        let lineWidth: CGFloat = 2
-        NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        // Edge line
+        let lineWidth: CGFloat = 1
+        NSColor.separatorColor.withAlphaComponent(0.6).setFill()
         switch edge {
         case .right:
             NSRect(x: 0, y: 0, width: lineWidth, height: bounds.height).fill()
@@ -119,9 +113,32 @@ private final class DividerView: NSView {
             NSRect(x: 0, y: bounds.height - lineWidth, width: bounds.width, height: lineWidth).fill()
         }
 
-        if isDragging {
-            NSColor.controlAccentColor.withAlphaComponent(0.3).setFill()
-            dragHandleRect.fill()
+        // Grip indicator (three short lines in center)
+        let gripColor = isDragging
+            ? NSColor.controlAccentColor.withAlphaComponent(0.8)
+            : NSColor.secondaryLabelColor.withAlphaComponent(0.5)
+        gripColor.setFill()
+
+        if isHorizontalEdge {
+            let centerY = bounds.midY
+            let gripLength: CGFloat = 16
+            let gripThickness: CGFloat = 1.5
+            let spacing: CGFloat = 3
+            for i in -1...1 {
+                let y = centerY + CGFloat(i) * spacing - gripThickness / 2
+                let x = (bounds.width - gripLength) / 2
+                NSBezierPath(roundedRect: NSRect(x: x, y: y, width: gripLength, height: gripThickness), xRadius: 0.75, yRadius: 0.75).fill()
+            }
+        } else {
+            let centerX = bounds.midX
+            let gripLength: CGFloat = 16
+            let gripThickness: CGFloat = 1.5
+            let spacing: CGFloat = 3
+            for i in -1...1 {
+                let x = centerX + CGFloat(i) * spacing - gripThickness / 2
+                let y = (bounds.height - gripLength) / 2
+                NSBezierPath(roundedRect: NSRect(x: x, y: y, width: gripThickness, height: gripLength), xRadius: 0.75, yRadius: 0.75).fill()
+            }
         }
     }
 
@@ -138,13 +155,10 @@ private final class DividerView: NSView {
     }
 
     override func mouseDown(with event: NSEvent) {
-        let point = convert(event.locationInWindow, from: nil)
-        if dragHandleRect.contains(point) {
-            isDragging = true
-            dragStartPoint = NSEvent.mouseLocation
-            dragStartSize = isHorizontalEdge ? bounds.width : bounds.height
-            needsDisplay = true
-        }
+        isDragging = true
+        dragStartPoint = NSEvent.mouseLocation
+        dragStartSize = barrierWindow?.reservedAreaSize ?? 0
+        needsDisplay = true
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -173,11 +187,4 @@ private final class DividerView: NSView {
         }
     }
 
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        let localPoint = convert(point, from: superview)
-        if dragHandleRect.contains(localPoint) {
-            return self
-        }
-        return nil
-    }
 }

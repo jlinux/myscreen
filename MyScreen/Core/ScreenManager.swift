@@ -40,7 +40,9 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
             let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: layout.reservedArea)
 
             if !isHidden {
-                let barrier = BarrierWindow(frame: result.reservedRect, edge: layout.reservedArea.edge)
+                let reservedSize = (layout.reservedArea.edge == .left || layout.reservedArea.edge == .right) ? result.reservedRect.width : result.reservedRect.height
+                let barrier = BarrierWindow(frame: result.dividerRect, edge: layout.reservedArea.edge)
+                barrier.reservedAreaSize = reservedSize
                 barrier.resizeDelegate = self
                 barrier.orderFront(nil)
                 barrierWindows[display.displayID] = barrier
@@ -104,12 +106,14 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
             guard layout.isActive else { continue }
 
             let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: layout.reservedArea)
+            let reservedSize = (layout.reservedArea.edge == .left || layout.reservedArea.edge == .right) ? result.reservedRect.width : result.reservedRect.height
             let startRect = offscreenRect(for: display, edge: layout.reservedArea.edge, layout: layout)
             let barrier = BarrierWindow(frame: startRect, edge: layout.reservedArea.edge)
+            barrier.reservedAreaSize = reservedSize
             barrier.resizeDelegate = self
             barrier.orderFront(nil)
             barrierWindows[display.displayID] = barrier
-            barrier.animateFrame(to: result.reservedRect, duration: animationDuration)
+            barrier.animateFrame(to: result.dividerRect, duration: animationDuration)
 
             if let boundApp = layout.boundApp {
                 windowMonitor.monitorApp(bundleIdentifier: boundApp.bundleIdentifier)
@@ -134,7 +138,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
     private func offscreenRect(for display: DisplayInfo, edge: EdgePosition, layout: ScreenLayout) -> CGRect {
         let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: layout.reservedArea)
-        let rect = result.reservedRect
+        let rect = result.dividerRect
         switch edge {
         case .right:
             return CGRect(x: display.visibleFrame.maxX, y: rect.origin.y, width: rect.width, height: rect.height)
@@ -158,7 +162,8 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         AppConfig.shared.setLayout(layout)
 
         let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, area: layout.reservedArea)
-        window.updateFrame(cgRect: result.reservedRect)
+        window.reservedAreaSize = newSize
+        window.updateFrame(cgRect: result.dividerRect)
 
         if let boundApp = layout.boundApp {
             moveBoundApp(bundleIdentifier: boundApp.bundleIdentifier, to: result.reservedRect)
