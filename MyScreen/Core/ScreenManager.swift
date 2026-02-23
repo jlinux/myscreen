@@ -133,9 +133,12 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
                 barrier.slotID = slot.id
                 barrier.reservedAreaSize = reservedSize
                 barrier.resizeDelegate = self
+                barrier.alphaValue = 1.0  // Visible during slide-in animation
                 barrier.orderFront(nil)
                 barrierWindows[slot.id] = barrier
-                barrier.animateFrame(to: slotResult.dividerRect, duration: animationDuration)
+                barrier.animateFrame(to: slotResult.dividerRect, duration: animationDuration) {
+                    barrier.fadeOut(duration: 0.5)
+                }
 
                 if let boundApp = slot.boundApp {
                     windowMonitor.monitorApp(bundleIdentifier: boundApp.bundleIdentifier)
@@ -313,7 +316,10 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         if fullScreen {
             for (_, barrier) in barrierWindows { barrier.orderOut(nil) }
         } else {
-            for (_, barrier) in barrierWindows { barrier.orderFront(nil) }
+            for (_, barrier) in barrierWindows {
+                barrier.alphaValue = 0.0  // Stay invisible until hovered
+                barrier.orderFront(nil)
+            }
         }
     }
 

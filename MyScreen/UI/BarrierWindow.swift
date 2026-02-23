@@ -26,12 +26,27 @@ final class BarrierWindow: NSWindow {
         backgroundColor = .clear
         hasShadow = false
         ignoresMouseEvents = false
+        alphaValue = 0.0  // Start invisible, fade in on hover
         collectionBehavior = [.canJoinAllSpaces, .stationary]
 
         let dividerView = DividerView(frame: NSRect(origin: .zero, size: nsRect.size))
         dividerView.edge = edge
         dividerView.barrierWindow = self
         contentView = dividerView
+    }
+
+    func fadeIn(duration: TimeInterval = 0.2) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            self.animator().alphaValue = 1.0
+        }
+    }
+
+    func fadeOut(duration: TimeInterval = 0.3) {
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = duration
+            self.animator().alphaValue = 0.0
+        }
     }
 
     func updateFrame(cgRect: CGRect) {
@@ -146,10 +161,14 @@ private final class DividerView: NSView {
         } else {
             NSCursor.resizeUpDown.set()
         }
+        barrierWindow?.fadeIn()
     }
 
     override func mouseExited(with event: NSEvent) {
         NSCursor.arrow.set()
+        if !isDragging {
+            barrierWindow?.fadeOut()
+        }
     }
 
     override func mouseDown(with event: NSEvent) {
@@ -184,6 +203,7 @@ private final class DividerView: NSView {
             isDragging = false
             needsDisplay = true
             NSCursor.arrow.set()
+            barrierWindow?.fadeOut()
         }
     }
 
