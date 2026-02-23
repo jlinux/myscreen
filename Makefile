@@ -1,4 +1,4 @@
-.PHONY: generate build run clean
+.PHONY: generate build run release clean
 
 PROJECT_NAME = MyScreen
 TEAM_ID = 4S269D79GZ
@@ -14,5 +14,13 @@ run: generate
 	xcodebuild -project $(PROJECT_NAME).xcodeproj -scheme $(PROJECT_NAME) -configuration Debug build $(SIGN_FLAGS) && \
 	open build/Debug/$(PROJECT_NAME).app
 
+release: generate
+	xcodebuild -project $(PROJECT_NAME).xcodeproj -scheme $(PROJECT_NAME) -configuration Release build $(SIGN_FLAGS) \
+		SWIFT_OPTIMIZATION_LEVEL=-O \
+		GCC_OPTIMIZATION_LEVEL=s \
+		SWIFT_COMPILATION_MODE=wholemodule
+	@echo ""
+	@echo "Release build at: build/Release/$(PROJECT_NAME).app"
+
 clean:
-	rm -rf build/Debug build/MyScreen.build DerivedData $(PROJECT_NAME).xcodeproj
+	rm -rf build/Debug build/Release build/MyScreen.build DerivedData $(PROJECT_NAME).xcodeproj

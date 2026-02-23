@@ -8,7 +8,7 @@ protocol WindowMonitorDelegate: AnyObject {
 /// Triple monitoring strategy:
 /// 1. AXObserver for bound app windows (real-time)
 /// 2. NSWorkspace notifications for app launch/quit
-/// 3. CGWindowList polling (200ms) for all window changes
+/// 3. CGWindowList polling (adaptive interval) for all window changes
 final class WindowMonitor {
     weak var delegate: WindowMonitorDelegate?
 
@@ -17,6 +17,13 @@ final class WindowMonitor {
     private var observerRefcons: [pid_t: UnsafeMutableRawPointer] = [:]
     private var monitoredBundleIDs: Set<String> = []
     private var lastWindowSnapshot: [CGWindowID: CGRect] = [:]
+
+    // Adaptive polling: fast when active, slow when idle
+    private static let fastInterval: TimeInterval = 0.5
+    private static let slowInterval: TimeInterval = 3.0
+    private static let idleThreshold = 5  // consecutive unchanged polls before slowing down
+    private var unchangedCount = 0
+    private var currentInterval: TimeInterval = fastInterval
 
     func start() {
         startPolling()
@@ -48,10 +55,15 @@ final class WindowMonitor {
         }
     }
 
-    // MARK: - CGWindowList Polling
+    // MARK: - CGWindowList Polling (Adaptive)
 
     private func startPolling() {
-        pollTimer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+        scheduleNextPoll()
+    }
+
+    private func scheduleNextPoll() {
+        pollTimer?.invalidate()
+        pollTimer = Timer.scheduledTimer(withTimeInterval: currentInterval, repeats: false) { [weak self] _ in
             self?.pollWindows()
         }
     }
@@ -65,7 +77,29 @@ final class WindowMonitor {
 
         if currentSnapshot != lastWindowSnapshot {
             lastWindowSnapshot = currentSnapshot
+            unchangedCount = 0
+            // Switch to fast polling when changes detected
+            if currentInterval != Self.fastInterval {
+                currentInterval = Self.fastInterval
+            }
             delegate?.windowMonitorDidDetectChange(self)
+        } else {
+            unchangedCount += 1
+            // Gradually slow down when idle
+            if unchangedCount >= Self.idleThreshold && currentInterval < Self.slowInterval {
+                currentInterval = min(currentInterval * 1.5, Self.slowInterval)
+            }
+        }
+
+        scheduleNextPoll()
+    }
+
+    /// Temporarily boost polling rate (called when external events hint at activity).
+    func boostPolling() {
+        unchangedCount = 0
+        if currentInterval != Self.fastInterval {
+            currentInterval = Self.fastInterval
+            scheduleNextPoll()
         }
     }
 
@@ -97,6 +131,7 @@ final class WindowMonitor {
     }
 
     @objc private func appDidActivate(_ notification: Notification) {
+        boostPolling()
         delegate?.windowMonitorDidDetectChange(self)
     }
 
@@ -111,6 +146,7 @@ final class WindowMonitor {
             let monitor = Unmanaged<WindowMonitor>.fromOpaque(refcon).takeUnretainedValue()
             DispatchQueue.main.async { [weak monitor] in
                 guard let monitor = monitor else { return }
+                monitor.boostPolling()
                 monitor.delegate?.windowMonitorDidDetectChange(monitor)
             }
         }
