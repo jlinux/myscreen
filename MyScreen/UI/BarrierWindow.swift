@@ -19,9 +19,11 @@ final class BarrierWindow: NSWindow {
         ignoresMouseEvents = true
         collectionBehavior = [.canJoinAllSpaces, .stationary]
 
-        // Draw a subtle divider line
         let dividerView = DividerView(frame: NSRect(origin: .zero, size: nsRect.size))
         contentView = dividerView
+
+        NSLog("MyScreen: BarrierWindow created at NS frame (%.0f, %.0f, %.0f, %.0f)",
+              nsRect.origin.x, nsRect.origin.y, nsRect.width, nsRect.height)
     }
 
     func updateFrame(cgRect: CGRect) {
@@ -45,24 +47,21 @@ final class BarrierWindow: NSWindow {
     }
 }
 
-/// Draws a 1px divider line along the edge adjacent to the work area.
+/// Draws a semi-transparent background with a divider line.
 private final class DividerView: NSView {
     override func draw(_ dirtyRect: NSRect) {
-        NSColor.separatorColor.withAlphaComponent(0.3).setFill()
+        // Semi-transparent background so the user can see the reserved area
+        NSColor.controlBackgroundColor.withAlphaComponent(0.05).setFill()
+        bounds.fill()
 
-        // Draw a thin line along the left edge (common for right-side reserved area)
-        // The ScreenManager will position the window exactly on the reserved area,
-        // so the left edge is adjacent to the work area for right-side config.
-        // We draw lines on all edges; only the visible one matters.
-        let lineWidth: CGFloat = 1
+        // Draw visible divider lines
+        NSColor.separatorColor.withAlphaComponent(0.5).setFill()
+        let lineWidth: CGFloat = 2
 
-        // Left edge
+        // All edges
         NSRect(x: 0, y: 0, width: lineWidth, height: bounds.height).fill()
-        // Right edge
         NSRect(x: bounds.width - lineWidth, y: 0, width: lineWidth, height: bounds.height).fill()
-        // Top edge
         NSRect(x: 0, y: bounds.height - lineWidth, width: bounds.width, height: lineWidth).fill()
-        // Bottom edge
         NSRect(x: 0, y: 0, width: bounds.width, height: lineWidth).fill()
     }
 }

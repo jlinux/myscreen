@@ -9,6 +9,7 @@ enum WindowController {
         var windowsRef: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(appElement, kAXWindowsAttribute as CFString, &windowsRef)
         guard result == .success, let windows = windowsRef as? [AXUIElement] else {
+            NSLog("MyScreen: AX windows query failed for PID %d, error=%d", pid, result.rawValue)
             return []
         }
         return windows
@@ -17,6 +18,9 @@ enum WindowController {
     /// Get all windows for a bundle identifier.
     static func windows(for bundleIdentifier: String) -> [AXUIElement] {
         let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+        if apps.isEmpty {
+            NSLog("MyScreen: No running apps found for bundleID=%@", bundleIdentifier)
+        }
         return apps.flatMap { windows(for: $0.processIdentifier) }
     }
 
@@ -47,22 +51,34 @@ enum WindowController {
     }
 
     /// Set the position of a window (CG coordinates, top-left origin).
-    static func setPosition(_ window: AXUIElement, to point: CGPoint) {
+    @discardableResult
+    static func setPosition(_ window: AXUIElement, to point: CGPoint) -> Bool {
         var p = point
-        guard let value = AXValueCreate(.cgPoint, &p) else { return }
-        AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+        guard let value = AXValueCreate(.cgPoint, &p) else { return false }
+        let result = AXUIElementSetAttributeValue(window, kAXPositionAttribute as CFString, value)
+        if result != .success {
+            NSLog("MyScreen: setPosition failed, error=%d", result.rawValue)
+        }
+        return result == .success
     }
 
     /// Set the size of a window.
-    static func setSize(_ window: AXUIElement, to size: CGSize) {
+    @discardableResult
+    static func setSize(_ window: AXUIElement, to size: CGSize) -> Bool {
         var s = size
-        guard let value = AXValueCreate(.cgSize, &s) else { return }
-        AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
+        guard let value = AXValueCreate(.cgSize, &s) else { return false }
+        let result = AXUIElementSetAttributeValue(window, kAXSizeAttribute as CFString, value)
+        if result != .success {
+            NSLog("MyScreen: setSize failed, error=%d", result.rawValue)
+        }
+        return result == .success
     }
 
     /// Move and resize a window to a target frame.
     /// Uses set-size → set-position → set-size pattern for reliable cross-display moves.
     static func setFrame(_ window: AXUIElement, to frame: CGRect) {
+        NSLog("MyScreen: setFrame to (%.0f, %.0f, %.0f, %.0f)",
+              frame.origin.x, frame.origin.y, frame.width, frame.height)
         setSize(window, to: frame.size)
         setPosition(window, to: frame.origin)
         setSize(window, to: frame.size)
@@ -75,19 +91,24 @@ enum WindowController {
         return result == .success ? pid : nil
     }
 
-    /// Check if a window is a standard, resizable window (not a dialog or sheet).
-    static func isStandardWindow(_ window: AXUIElement) -> Bool {
+    /// Get the role of a window.
+    static func getRole(_ window: AXUIElement) -> String? {
         var roleRef: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(window, kAXRoleAttribute as CFString, &roleRef)
-        guard result == .success, let role = roleRef as? String else { return false }
-        return role == kAXWindowRole
+        guard result == .success else { return nil }
+        return roleRef as? String
     }
 
-    /// Check if a window has the standard close/minimize/zoom buttons (indicating it's a real window).
-    static func isResizable(_ window: AXUIElement) -> Bool {
+    /// Get the subrole of a window.
+    static func getSubrole(_ window: AXUIElement) -> String? {
         var subroleRef: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(window, kAXSubroleAttribute as CFString, &subroleRef)
-        guard result == .success, let subrole = subroleRef as? String else { return false }
-        return subrole == kAXStandardWindowSubrole
+        guard result == .success else { return nil }
+        return subroleRef as? String
+    }
+
+    /// Check if a window is movable (has position + size attributes).
+    static func isMovable(_ window: AXUIElement) -> Bool {
+        return getPosition(window) != nil && getSize(window) != nil
     }
 }

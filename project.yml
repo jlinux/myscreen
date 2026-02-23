@@ -11,6 +11,9 @@ settings:
     MACOSX_DEPLOYMENT_TARGET: "14.0"
     PRODUCT_BUNDLE_IDENTIFIER: com.myscreen.app
     CODE_SIGN_ENTITLEMENTS: MyScreen/MyScreen.entitlements
+    CODE_SIGN_IDENTITY: "Apple Development"
+    DEVELOPMENT_TEAM: QP5RAL5RB4
+    CODE_SIGN_STYLE: Automatic
     INFOPLIST_FILE: MyScreen/Info.plist
     SYMROOT: build
 

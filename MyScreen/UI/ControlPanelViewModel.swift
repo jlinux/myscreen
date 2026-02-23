@@ -14,8 +14,12 @@ final class ControlPanelViewModel: ObservableObject {
     weak var screenManager: ScreenManager?
 
     func refresh() {
-        guard let sm = screenManager else { return }
+        guard let sm = screenManager else {
+            Log.info("ViewModel.refresh: screenManager is nil")
+            return
+        }
         displays = sm.displayManager.displays
+        Log.info("ViewModel.refresh: \(displays.count) displays")
 
         if selectedDisplayID == nil {
             selectedDisplayID = displays.first?.displayID
@@ -34,35 +38,39 @@ final class ControlPanelViewModel: ObservableObject {
                 sizeType = "percentage"
                 sizeValue = v * 100
             }
+            Log.info("ViewModel.refresh: displayID=\(displayID) isActive=\(isActive) edge=\(edge.rawValue) boundApp=\(boundApp?.displayName ?? "none")")
         }
     }
 
     func applyChanges() {
-        guard let displayID = selectedDisplayID else { return }
+        guard let displayID = selectedDisplayID else {
+            Log.info("applyChanges: no selectedDisplayID")
+            return
+        }
 
         let size: SizeSpec = sizeType == "pixels"
             ? .pixels(sizeValue)
             : .percentage(sizeValue / 100)
 
-        var layout = ScreenLayout(
+        let layout = ScreenLayout(
             displayID: displayID,
             reservedArea: ReservedArea(edge: edge, size: size),
             boundApp: boundApp,
             isActive: isActive
         )
-        _ = layout // suppress warning
 
-        AppConfig.shared.setLayout(ScreenLayout(
-            displayID: displayID,
-            reservedArea: ReservedArea(edge: edge, size: size),
-            boundApp: boundApp,
-            isActive: isActive
-        ))
+        Log.info("applyChanges: displayID=\(displayID) isActive=\(isActive) edge=\(edge.rawValue) boundApp=\(boundApp?.displayName ?? "none")")
 
+        AppConfig.shared.setLayout(layout)
+
+        if screenManager == nil {
+            Log.info("WARNING: screenManager is nil!")
+        }
         screenManager?.applyConfiguration()
     }
 
     func selectDisplay(_ id: CGDirectDisplayID) {
+        Log.info("selectDisplay: \(id)")
         selectedDisplayID = id
         refresh()
     }
@@ -78,6 +86,7 @@ final class ControlPanelViewModel: ObservableObject {
     }
 
     func bindApp(_ app: AppBinding) {
+        Log.info("bindApp: \(app.displayName) (\(app.bundleIdentifier))")
         boundApp = app
         showAppPicker = false
         applyChanges()
