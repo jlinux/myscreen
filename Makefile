@@ -1,4 +1,4 @@
-.PHONY: generate build run release clean
+.PHONY: generate build run release clean reset-permissions
 
 PROJECT_NAME = MyScreen
 TEAM_ID = 4S269D79GZ
@@ -21,6 +21,10 @@ release: generate
 		SWIFT_COMPILATION_MODE=wholemodule
 	@echo ""
 	@echo "Release build at: build/Release/$(PROJECT_NAME).app"
+
+reset-permissions:
+	tccutil reset Accessibility com.myscreen.app
+	@echo "Accessibility permission reset. Re-launch the app to trigger the authorization prompt."
 
 clean:
 	rm -rf build/Debug build/Release build/MyScreen.build DerivedData $(PROJECT_NAME).xcodeproj

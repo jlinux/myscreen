@@ -5,6 +5,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     let displayManager = DisplayManager()
     private let windowMonitor = WindowMonitor()
     let hotkeyManager = HotkeyManager()
+    let resolutionManager = ResolutionManager()
     private var barrierWindows: [UUID: BarrierWindow] = [:]  // keyed by slot UUID
     private(set) var isHidden = false
     private let ownBundleID = Bundle.main.bundleIdentifier ?? "com.myscreen.app"
@@ -293,6 +294,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     }
 
     func displayManagerDidDetectChange(_ manager: DisplayManager) {
+        resolutionManager.invalidateCache()
         applyConfiguration()
     }
 

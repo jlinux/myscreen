@@ -9,7 +9,7 @@ final class StatusBarController {
 
     init() {
         popover = NSPopover()
-        popover.contentSize = NSSize(width: 320, height: 400)
+        popover.contentSize = NSSize(width: 320, height: 500)
         popover.behavior = .transient
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)

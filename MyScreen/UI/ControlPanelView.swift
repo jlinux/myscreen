@@ -67,6 +67,51 @@ struct ControlPanelView: View {
                 }
             }
 
+            // Resolution section
+            Divider()
+
+            VStack(alignment: .leading, spacing: 4) {
+                Button {
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        viewModel.isResolutionExpanded.toggle()
+                    }
+                } label: {
+                    HStack(spacing: 6) {
+                        Image(systemName: viewModel.isResolutionExpanded ? "chevron.down" : "chevron.right")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .frame(width: 12)
+                        Text("Resolution")
+                            .font(.subheadline)
+                            .fontWeight(.medium)
+                        Spacer()
+                        if !viewModel.isResolutionExpanded, let mode = viewModel.currentDisplayMode {
+                            Text(mode.dimensionLabel)
+                                .font(.caption)
+                                .foregroundColor(.secondary)
+                            if mode.isHiDPI {
+                                Text("HiDPI")
+                                    .font(.system(size: 9, weight: .semibold))
+                                    .foregroundColor(.white)
+                                    .padding(.horizontal, 5)
+                                    .padding(.vertical, 1)
+                                    .background(Capsule().fill(Color.blue))
+                            }
+                        }
+                    }
+                    .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+
+                if viewModel.isResolutionExpanded {
+                    ResolutionPickerView(
+                        groups: viewModel.displayModeGroups,
+                        currentMode: viewModel.currentDisplayMode,
+                        onSelect: { viewModel.switchResolution(to: $0) }
+                    )
+                }
+            }
+
             // Slots header
             HStack {
                 Text("Reserved Areas")

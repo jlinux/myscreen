@@ -10,35 +10,65 @@ final class ControlPanelViewModel: ObservableObject {
     @Published var hotkeyConfig: HotkeyConfig = .defaultHotkey
     @Published var brightness: Float = 1.0
     @Published var brightnessControlMethod: BrightnessControlMethod = .unavailable
+    @Published var displayModeGroups: [DisplayModeGroup] = []
+    @Published var currentDisplayMode: DisplayMode?
+    @Published var isResolutionExpanded: Bool = false
 
     /// Which slot the app picker is for
     var appPickerSlotID: UUID?
     private var brightnessDebounceTimer: Timer?
+    private let resolutionManager = ResolutionManager()
+    private let fallbackDisplayManager = DisplayManager()
 
     weak var screenManager: ScreenManager?
 
     func refresh() {
-        guard let sm = screenManager else {
-            Log.info("ViewModel.refresh: screenManager is nil")
-            return
-        }
-        displays = sm.displayManager.displays
-        hotkeyConfig = AppConfig.shared.hotkey
+        // Load display list regardless of screenManager availability
+        let dm = screenManager?.displayManager ?? fallbackDisplayManager
+        displays = dm.displays
 
         if selectedDisplayID == nil {
             selectedDisplayID = displays.first?.displayID
         }
 
-        if let displayID = selectedDisplayID {
-            let layout = AppConfig.shared.layout(for: displayID)
-            slots = layout.slots
-            // Auto-expand first slot if none expanded
-            if expandedSlotID == nil, let first = slots.first {
-                expandedSlotID = first.id
+        if let sm = screenManager {
+            hotkeyConfig = AppConfig.shared.hotkey
+
+            if let displayID = selectedDisplayID {
+                let layout = AppConfig.shared.layout(for: displayID)
+                slots = layout.slots
+                if expandedSlotID == nil, let first = slots.first {
+                    expandedSlotID = first.id
+                }
             }
+
+            refreshBrightness()
         }
 
-        refreshBrightness()
+        refreshResolution()
+    }
+
+    func refreshResolution() {
+        guard let displayID = selectedDisplayID else {
+            displayModeGroups = []
+            currentDisplayMode = nil
+            return
+        }
+        displayModeGroups = resolutionManager.groupedModes(for: displayID)
+        currentDisplayMode = resolutionManager.currentMode(for: displayID)
+        Log.info("refreshResolution: displayID=\(displayID) groups=\(displayModeGroups.count) current=\(currentDisplayMode?.dimensionLabel ?? "nil")")
+    }
+
+    func switchResolution(to mode: DisplayMode) {
+        guard let displayID = selectedDisplayID else { return }
+        Log.info("switchResolution: \(mode.dimensionLabel) hiDPI=\(mode.isHiDPI) id=\(mode.id)")
+        if resolutionManager.setMode(mode, for: displayID) {
+            currentDisplayMode = mode
+            // Refresh after mode change (cache merges new modes, preserving HiDPI)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.refreshResolution()
+            }
+        }
     }
 
     func refreshBrightness() {
