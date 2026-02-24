@@ -13,6 +13,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private let animationDuration: TimeInterval = 0.3
     private var spaceChangeObserver: NSObjectProtocol?
     private var appActivationObserver: NSObjectProtocol?
+    private var wakeObserver: NSObjectProtocol?
 
     func start() {
         Log.info("ScreenManager starting")
@@ -25,12 +26,23 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
             self?.toggleVisibility()
         }
         startFullScreenMonitoring()
+
+        wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.didWakeNotification,
+            object: nil, queue: .main
+        ) { _ in
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                BrightnessManager.shared.reapplySoftwareGamma()
+            }
+        }
     }
 
     func stop() {
         constrainDebounceTimer?.invalidate()
         constrainDebounceTimer = nil
         stopFullScreenMonitoring()
+        if let obs = wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
+        wakeObserver = nil
         windowMonitor.stop()
         hotkeyManager.unregister()
         removeAllBarrierWindows()

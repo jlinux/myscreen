@@ -8,9 +8,12 @@ final class ControlPanelViewModel: ObservableObject {
     @Published var expandedSlotID: UUID?
     @Published var showAppPicker: Bool = false
     @Published var hotkeyConfig: HotkeyConfig = .defaultHotkey
+    @Published var brightness: Float = 1.0
+    @Published var brightnessControlMethod: BrightnessControlMethod = .unavailable
 
     /// Which slot the app picker is for
     var appPickerSlotID: UUID?
+    private var brightnessDebounceTimer: Timer?
 
     weak var screenManager: ScreenManager?
 
@@ -33,6 +36,29 @@ final class ControlPanelViewModel: ObservableObject {
             if expandedSlotID == nil, let first = slots.first {
                 expandedSlotID = first.id
             }
+        }
+
+        refreshBrightness()
+    }
+
+    func refreshBrightness() {
+        guard let displayID = selectedDisplayID else {
+            brightnessControlMethod = .unavailable
+            return
+        }
+        let method = BrightnessManager.shared.controlMethod(for: displayID)
+        let raw = BrightnessManager.shared.getBrightness(for: displayID)
+        Log.info("refreshBrightness: displayID=\(displayID) method=\(method) raw=\(String(describing: raw))")
+        brightnessControlMethod = method
+        brightness = raw ?? 1.0
+    }
+
+    func setBrightness(_ value: Float) {
+        brightness = value
+        brightnessDebounceTimer?.invalidate()
+        brightnessDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.016, repeats: false) { [weak self] _ in
+            guard let self = self, let displayID = self.selectedDisplayID else { return }
+            BrightnessManager.shared.setBrightness(for: displayID, to: value)
         }
     }
 

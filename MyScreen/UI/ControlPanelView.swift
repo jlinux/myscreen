@@ -36,6 +36,37 @@ struct ControlPanelView: View {
                 }
             }
 
+            // Brightness slider
+            if viewModel.brightnessControlMethod != .unavailable {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack(spacing: 6) {
+                        Image(systemName: "sun.min")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                        Slider(
+                            value: Binding(
+                                get: { viewModel.brightness },
+                                set: { viewModel.setBrightness($0) }
+                            ),
+                            in: 0.05...1.0,
+                            step: 0.01
+                        )
+                        Image(systemName: "sun.max")
+                            .foregroundColor(.secondary)
+                            .font(.caption)
+                        Text("\(Int(viewModel.brightness * 100))%")
+                            .monospacedDigit()
+                            .font(.caption)
+                            .frame(width: 35, alignment: .trailing)
+                    }
+                    if viewModel.brightnessControlMethod == .softwareGamma {
+                        Text("Software dimming (hardware control unavailable)")
+                            .font(.caption2)
+                            .foregroundColor(Color(nsColor: .tertiaryLabelColor))
+                    }
+                }
+            }
+
             // Slots header
             HStack {
                 Text("Reserved Areas")

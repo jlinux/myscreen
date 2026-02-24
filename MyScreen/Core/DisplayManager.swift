@@ -50,6 +50,7 @@ final class DisplayManager {
 
     @objc private func screenParametersDidChange() {
         refresh()
+        BrightnessManager.shared.invalidateCache()
         delegate?.displayManagerDidDetectChange(self)
     }
 }
