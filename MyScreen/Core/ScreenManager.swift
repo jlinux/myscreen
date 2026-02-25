@@ -14,6 +14,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private var spaceChangeObserver: NSObjectProtocol?
     private var appActivationObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
+    private var mouseUpMonitor: Any?
 
     func start() {
         Log.info("ScreenManager starting")
@@ -26,6 +27,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
             self?.toggleVisibility()
         }
         startFullScreenMonitoring()
+        startMouseUpMonitor()
 
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
@@ -40,6 +42,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     func stop() {
         constrainDebounceTimer?.invalidate()
         constrainDebounceTimer = nil
+        stopMouseUpMonitor()
         stopFullScreenMonitoring()
         if let obs = wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
         wakeObserver = nil
@@ -263,7 +266,9 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     }
 
     private func handleWindowChange() {
-        let frontmostBundleID = NSWorkspace.shared.frontmostApplication?.bundleIdentifier
+        // Skip bound-app repositioning while the user is dragging (mouse button held).
+        // The global mouseUp monitor will trigger repositioning when the drag ends.
+        let mouseDown = NSEvent.pressedMouseButtons & 0x1 != 0
 
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
@@ -276,9 +281,48 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
             for slot in activeSlots {
                 guard let boundApp = slot.boundApp, let slotResult = result.slotResults[slot.id] else { continue }
-                // Skip repositioning if the bound app is frontmost — the user may be
-                // interacting with it (typing with IME, using menus, etc.)
-                if frontmostBundleID == boundApp.bundleIdentifier { continue }
+                if mouseDown { continue }
+                let axWindows = WindowController.windows(for: boundApp.bundleIdentifier)
+                for window in axWindows {
+                    guard WindowController.isMovable(window),
+                          WindowController.isMainWindow(window),
+                          let currentFrame = WindowController.getFrame(window) else { continue }
+                    if !rectsApproximatelyEqual(currentFrame, slotResult.reservedRect, tolerance: 5) {
+                        WindowController.setFrame(window, to: slotResult.reservedRect)
+                    }
+                }
+            }
+        }
+    }
+
+    // MARK: - Global Mouse-Up Monitor
+
+    private func startMouseUpMonitor() {
+        mouseUpMonitor = NSEvent.addGlobalMonitorForEvents(matching: .leftMouseUp) { [weak self] _ in
+            guard let self = self, !self.isHidden else { return }
+            // Small delay to let the window settle at its final position
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) {
+                self.repositionBoundApps()
+            }
+        }
+    }
+
+    private func stopMouseUpMonitor() {
+        if let monitor = mouseUpMonitor {
+            NSEvent.removeMonitor(monitor)
+            mouseUpMonitor = nil
+        }
+    }
+
+    private func repositionBoundApps() {
+        for display in displayManager.displays {
+            let layout = AppConfig.shared.layout(for: display.displayID)
+            let activeSlots = layout.slots.filter { $0.isActive }
+            guard !activeSlots.isEmpty else { continue }
+
+            let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, slots: layout.slots)
+            for slot in activeSlots {
+                guard let boundApp = slot.boundApp, let slotResult = result.slotResults[slot.id] else { continue }
                 let axWindows = WindowController.windows(for: boundApp.bundleIdentifier)
                 for window in axWindows {
                     guard WindowController.isMovable(window),
