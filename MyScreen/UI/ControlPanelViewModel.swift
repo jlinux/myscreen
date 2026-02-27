@@ -25,7 +25,7 @@ final class ControlPanelViewModel: ObservableObject {
         displays = sm.displayManager.displays
         hotkeyConfig = AppConfig.shared.hotkey
 
-        if selectedDisplayID == nil {
+        if selectedDisplayID == nil || !displays.contains(where: { $0.displayID == selectedDisplayID }) {
             selectedDisplayID = displays.first?.displayID
         }
 
