@@ -16,10 +16,13 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private var appActivationObserver: NSObjectProtocol?
     private var wakeObserver: NSObjectProtocol?
     private var mouseUpMonitor: Any?
+    private var visibilityTransitionID: UInt = 0
 
     func start() {
         Log.info("ScreenManager starting")
-        isHidden = AppConfig.shared.isScreenHidden
+        isHidden = false
+        AppConfig.shared.isScreenHidden = false
+        AppConfig.shared.save()
         displayManager.delegate = self
         windowMonitor.delegate = self
         applyConfiguration()
@@ -109,14 +112,23 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     // MARK: - F-014: Animated Visibility Toggle
 
     func toggleVisibility() {
+        visibilityTransitionID &+= 1
+        let transitionID = visibilityTransitionID
+        constrainDebounceTimer?.invalidate()
+        constrainDebounceTimer = nil
         isHidden.toggle()
         AppConfig.shared.isScreenHidden = isHidden
         AppConfig.shared.save()
         Log.info("toggleVisibility, isHidden=\(isHidden)")
-        if isHidden { animateHide() } else { animateShow() }
+        if isHidden {
+            animateHide(transitionID: transitionID)
+        } else {
+            animateShow(transitionID: transitionID)
+        }
+        windowMonitor.boostPolling()
     }
 
-    private func animateHide() {
+    private func animateHide(transitionID: UInt) {
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
             let activeSlots = layout.slots.filter { $0.isActive }
@@ -131,14 +143,26 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
                 }
                 if let boundApp = slot.boundApp {
                     DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration * 0.5) { [weak self] in
-                        self?.hideBoundWindow(binding: boundApp)
+                        guard let self = self,
+                              self.isHidden,
+                              self.visibilityTransitionID == transitionID else { return }
+                        self.hideBoundWindow(binding: boundApp)
                     }
                 }
             }
         }
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration) { [weak self] in
+            guard let self = self,
+                  self.isHidden,
+                  self.visibilityTransitionID == transitionID else { return }
+            self.removeAllBarrierWindows()
+        }
     }
 
-    private func animateShow() {
+    private func animateShow(transitionID: UInt) {
+        removeAllBarrierWindows()
+
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
             let activeSlots = layout.slots.filter { $0.isActive }
@@ -165,7 +189,10 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
                     let apps = NSRunningApplication.runningApplications(withBundleIdentifier: boundApp.bundleIdentifier)
                     for app in apps { if app.isHidden { app.unhide() } }
                     DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration * 0.3) { [weak self] in
-                        self?.moveBoundWindow(binding: boundApp, to: slotResult.reservedRect)
+                        guard let self = self,
+                              !self.isHidden,
+                              self.visibilityTransitionID == transitionID else { return }
+                        self.moveBoundWindow(binding: boundApp, to: slotResult.reservedRect)
                     }
                 }
             }
@@ -174,7 +201,9 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
             let reservedAreas = buildReservedAreas(layout: layout, result: result)
             DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration + 0.1) { [weak self] in
                 guard let self = self else { return }
+                guard !self.isHidden, self.visibilityTransitionID == transitionID else { return }
                 self.constrainWindows(displayFrame: display.frame, workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: self.excludedBundleIDs())
+                self.checkFullScreenState()
             }
         }
     }
