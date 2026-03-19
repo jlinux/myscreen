@@ -1,6 +1,10 @@
 import SwiftUI
 import CoreGraphics
 
+extension Notification.Name {
+    static let myScreenBindingStateDidChange = Notification.Name("MyScreenBindingStateDidChange")
+}
+
 final class ControlPanelViewModel: ObservableObject {
     @Published var displays: [DisplayInfo] = []
     @Published var selectedDisplayID: CGDirectDisplayID?
@@ -10,12 +14,31 @@ final class ControlPanelViewModel: ObservableObject {
     @Published var hotkeyConfig: HotkeyConfig = .defaultHotkey
     @Published var brightness: Float = 1.0
     @Published var brightnessControlMethod: BrightnessControlMethod = .unavailable
+    @Published private(set) var invalidBindingSlotIDs: Set<UUID> = []
 
     /// Which slot the app picker is for
     var appPickerSlotID: UUID?
+    var preferredBundleIdentifierForPicker: String?
     private var brightnessDebounceTimer: Timer?
+    private var bindingStateObserver: NSObjectProtocol?
 
     weak var screenManager: ScreenManager?
+
+    init() {
+        bindingStateObserver = NotificationCenter.default.addObserver(
+            forName: .myScreenBindingStateDidChange,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.refreshBindingStatus()
+        }
+    }
+
+    deinit {
+        if let bindingStateObserver {
+            NotificationCenter.default.removeObserver(bindingStateObserver)
+        }
+    }
 
     func refresh() {
         guard let sm = screenManager else {
@@ -38,6 +61,7 @@ final class ControlPanelViewModel: ObservableObject {
             }
         }
 
+        refreshBindingStatus()
         refreshBrightness()
     }
 
@@ -76,18 +100,19 @@ final class ControlPanelViewModel: ObservableObject {
     // MARK: - Slot Operations
 
     func addSlot() {
-        guard let displayID = selectedDisplayID else { return }
+        guard selectedDisplayID != nil else { return }
         var layout = currentLayout
         if let slot = layout.addSlot() {
             AppConfig.shared.setLayout(layout)
             slots = layout.slots
             expandedSlotID = slot.id
+            refreshBindingStatus()
             screenManager?.applyConfiguration()
         }
     }
 
     func removeSlot(_ slotID: UUID) {
-        guard let displayID = selectedDisplayID else { return }
+        guard selectedDisplayID != nil else { return }
         var layout = currentLayout
         layout.removeSlot(id: slotID)
         AppConfig.shared.setLayout(layout)
@@ -95,6 +120,7 @@ final class ControlPanelViewModel: ObservableObject {
         if expandedSlotID == slotID {
             expandedSlotID = slots.first?.id
         }
+        refreshBindingStatus()
         screenManager?.applyConfiguration()
     }
 
@@ -106,20 +132,46 @@ final class ControlPanelViewModel: ObservableObject {
 
     func setSlotEdge(_ slotID: UUID, edge: EdgePosition) {
         guard var slot = slots.first(where: { $0.id == slotID }) else { return }
+        guard currentLayout.canUseEdge(edge, excluding: slotID) else {
+            Log.info("setSlotEdge rejected duplicate edge=\(edge.rawValue) for slot \(slotID)")
+            return
+        }
         slot.reservedArea.edge = edge
         updateSlot(slot)
     }
 
     func setSlotSizeType(_ slotID: UUID, type: String) {
         guard var slot = slots.first(where: { $0.id == slotID }) else { return }
+        let currentType = slotSizeType(slot)
+        guard currentType != type else { return }
+        guard let baseLength = sizeReferenceLength(for: slot) else {
+            Log.info("setSlotSizeType skipped, missing display context for slot \(slotID)")
+            return
+        }
+
         switch type {
         case "pixels":
-            let current = slotSizeValue(slot)
-            slot.reservedArea.size = .pixels(current)
+            let percentage: CGFloat
+            switch slot.reservedArea.size {
+            case .percentage(let value):
+                percentage = value
+            case .pixels:
+                updateSlot(slot)
+                return
+            }
+            slot.reservedArea.size = .pixels(max(100, percentage * baseLength))
         case "percentage":
-            let current = slotSizeValue(slot)
-            slot.reservedArea.size = .percentage(current / 100)
-        default: break
+            let pixels: CGFloat
+            switch slot.reservedArea.size {
+            case .pixels(let value):
+                pixels = value
+            case .percentage:
+                updateSlot(slot)
+                return
+            }
+            slot.reservedArea.size = .percentage(min(max(pixels / baseLength, 0), 1))
+        default:
+            return
         }
         updateSlot(slot)
     }
@@ -135,8 +187,9 @@ final class ControlPanelViewModel: ObservableObject {
         updateSlot(slot)
     }
 
-    func showAppPickerForSlot(_ slotID: UUID) {
+    func showAppPickerForSlot(_ slotID: UUID, preferredBundleIdentifier: String? = nil) {
         appPickerSlotID = slotID
+        preferredBundleIdentifierForPicker = preferredBundleIdentifier
         showAppPicker = true
     }
 
@@ -146,6 +199,7 @@ final class ControlPanelViewModel: ObservableObject {
         slot.boundApp = app
         showAppPicker = false
         appPickerSlotID = nil
+        preferredBundleIdentifierForPicker = nil
         updateSlot(slot)
     }
 
@@ -153,6 +207,12 @@ final class ControlPanelViewModel: ObservableObject {
         guard var slot = slots.first(where: { $0.id == slotID }) else { return }
         slot.boundApp = nil
         updateSlot(slot)
+    }
+
+    func cancelAppPicker() {
+        showAppPicker = false
+        appPickerSlotID = nil
+        preferredBundleIdentifierForPicker = nil
     }
 
     // MARK: - Helpers
@@ -175,13 +235,32 @@ final class ControlPanelViewModel: ObservableObject {
         Set(slots.filter { $0.id != slotID }.map { $0.reservedArea.edge })
     }
 
+    func bindingMissing(for slotID: UUID) -> Bool {
+        invalidBindingSlotIDs.contains(slotID)
+    }
+
     private func updateSlot(_ slot: ReservedSlot) {
-        guard let displayID = selectedDisplayID else { return }
+        guard selectedDisplayID != nil else { return }
         var layout = currentLayout
         layout.updateSlot(slot)
         AppConfig.shared.setLayout(layout)
         slots = layout.slots
+        refreshBindingStatus()
         screenManager?.applyConfiguration()
+    }
+
+    private func sizeReferenceLength(for slot: ReservedSlot) -> CGFloat? {
+        guard let displayID = selectedDisplayID,
+              let display = displays.first(where: { $0.displayID == displayID }) else {
+            return nil
+        }
+
+        switch slot.reservedArea.edge {
+        case .left, .right:
+            return display.visibleFrame.width
+        case .top, .bottom:
+            return display.visibleFrame.height
+        }
     }
 
     func selectDisplay(_ id: CGDirectDisplayID) {
@@ -194,5 +273,14 @@ final class ControlPanelViewModel: ObservableObject {
         Log.info("updateHotkey: \(config.displayString)")
         hotkeyConfig = config
         screenManager?.hotkeyManager.updateHotkey(config)
+    }
+
+    private func refreshBindingStatus() {
+        invalidBindingSlotIDs = Set(
+            slots.compactMap { slot in
+                guard slot.isActive, let binding = slot.boundApp else { return nil }
+                return WindowController.bestWindow(for: binding) == nil ? slot.id : nil
+            }
+        )
     }
 }

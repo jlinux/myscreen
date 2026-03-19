@@ -7,6 +7,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         Log.info("App launched, bundleID=\(Bundle.main.bundleIdentifier ?? "nil")")
+        NSApp.setActivationPolicy(.accessory)
 
         statusBarController = StatusBarController()
 

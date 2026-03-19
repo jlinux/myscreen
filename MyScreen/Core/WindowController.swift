@@ -3,6 +3,14 @@ import ApplicationServices
 
 /// AXUIElement wrapper for controlling other application windows.
 enum WindowController {
+    struct BindableWindowInfo: Identifiable, Equatable {
+        let id: String
+        let title: String
+        let identifier: String?
+        let subrole: String?
+        let frame: CGRect
+    }
+
     /// Get all AXUIElement windows for a given PID.
     static func windows(for pid: pid_t) -> [AXUIElement] {
         let appElement = AXUIElementCreateApplication(pid)
@@ -111,12 +119,46 @@ enum WindowController {
         return subroleRef as? String
     }
 
+    /// Get the title of a window.
+    static func getTitle(_ window: AXUIElement) -> String? {
+        var titleRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(window, kAXTitleAttribute as CFString, &titleRef)
+        guard result == .success else { return nil }
+        let title = (titleRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (title?.isEmpty == false) ? title : nil
+    }
+
+    /// Get the AX identifier of a window if exposed by the target app.
+    static func getIdentifier(_ window: AXUIElement) -> String? {
+        var identifierRef: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(window, "AXIdentifier" as CFString, &identifierRef)
+        guard result == .success else { return nil }
+        let identifier = (identifierRef as? String)?.trimmingCharacters(in: .whitespacesAndNewlines)
+        return (identifier?.isEmpty == false) ? identifier : nil
+    }
+
     /// Check if a window is in full-screen mode.
     static func isFullScreen(_ window: AXUIElement) -> Bool {
         var value: CFTypeRef?
         let result = AXUIElementCopyAttributeValue(window, "AXFullScreen" as CFString, &value)
         guard result == .success else { return false }
         return (value as? Bool) == true
+    }
+
+    static func isMinimized(_ window: AXUIElement) -> Bool {
+        var value: CFTypeRef?
+        let result = AXUIElementCopyAttributeValue(window, kAXMinimizedAttribute as CFString, &value)
+        guard result == .success else { return false }
+        return (value as? Bool) == true
+    }
+
+    @discardableResult
+    static func setMinimized(_ window: AXUIElement, to minimized: Bool) -> Bool {
+        let result = AXUIElementSetAttributeValue(window, kAXMinimizedAttribute as CFString, minimized as CFBoolean)
+        if result != .success {
+            NSLog("MyScreen: setMinimized failed, error=%d", result.rawValue)
+        }
+        return result == .success
     }
 
     /// Check if a window is movable (has position + size attributes).
@@ -136,5 +178,135 @@ enum WindowController {
             return allowedSubroles.contains(subrole)
         }
         return true
+    }
+
+    static func bindableWindows(for bundleIdentifier: String) -> [BindableWindowInfo] {
+        windows(for: bundleIdentifier)
+            .compactMap { window -> BindableWindowInfo? in
+                guard isMovable(window),
+                      isMainWindow(window),
+                      let frame = getFrame(window) else { return nil }
+
+                let title = getTitle(window) ?? "Untitled Window"
+                let identifier = getIdentifier(window)
+                let subrole = getSubrole(window)
+                let id = [
+                    identifier ?? "",
+                    title,
+                    subrole ?? "",
+                    String(Int(frame.origin.x)),
+                    String(Int(frame.origin.y)),
+                    String(Int(frame.width)),
+                    String(Int(frame.height)),
+                ].joined(separator: "|")
+
+                return BindableWindowInfo(
+                    id: id,
+                    title: title,
+                    identifier: identifier,
+                    subrole: subrole,
+                    frame: frame
+                )
+            }
+            .sorted {
+                if $0.title != $1.title {
+                    return $0.title.localizedCaseInsensitiveCompare($1.title) == .orderedAscending
+                }
+                return $0.frame.origin.x < $1.frame.origin.x
+            }
+    }
+
+    static func bestWindow(for binding: AppBinding) -> AXUIElement? {
+        let candidates = windows(for: binding.bundleIdentifier).compactMap { window -> WindowCandidate? in
+            guard isMovable(window),
+                  isMainWindow(window),
+                  let frame = getFrame(window) else { return nil }
+
+            return WindowCandidate(
+                window: window,
+                title: getTitle(window),
+                identifier: getIdentifier(window),
+                subrole: getSubrole(window),
+                frame: frame
+            )
+        }
+
+        guard !candidates.isEmpty else { return nil }
+
+        if let identifier = binding.windowIdentifier,
+           let exactIdentifier = candidates.first(where: { $0.identifier == identifier }) {
+            return exactIdentifier.window
+        }
+
+        if let title = normalized(binding.windowTitle) {
+            let exactTitleMatches = candidates.filter { normalized($0.title) == title }
+            if let match = nearestCandidate(to: binding, in: exactTitleMatches) {
+                return match.window
+            }
+        }
+
+        if let subrole = binding.windowSubrole {
+            let subroleMatches = candidates.filter { $0.subrole == subrole }
+            if let match = nearestCandidate(to: binding, in: subroleMatches) {
+                return match.window
+            }
+        }
+
+        return nearestCandidate(to: binding, in: candidates)?.window
+    }
+
+    private struct WindowCandidate {
+        let window: AXUIElement
+        let title: String?
+        let identifier: String?
+        let subrole: String?
+        let frame: CGRect
+    }
+
+    private static func normalized(_ value: String?) -> String? {
+        guard let value else { return nil }
+        let normalized = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        return normalized.isEmpty ? nil : normalized.lowercased()
+    }
+
+    private static func nearestCandidate(to binding: AppBinding, in candidates: [WindowCandidate]) -> WindowCandidate? {
+        guard !candidates.isEmpty else { return nil }
+
+        if let title = normalized(binding.windowTitle) {
+            let titled = candidates.filter { normalized($0.title) == title }
+            if !titled.isEmpty {
+                return titled.min { compareCandidates($0, $1, binding: binding) }
+            }
+        }
+
+        return candidates.min { compareCandidates($0, $1, binding: binding) }
+    }
+
+    private static func compareCandidates(_ lhs: WindowCandidate, _ rhs: WindowCandidate, binding: AppBinding) -> Bool {
+        let lhsScore = frameDistanceScore(lhs.frame, binding: binding)
+        let rhsScore = frameDistanceScore(rhs.frame, binding: binding)
+        if lhsScore != rhsScore {
+            return lhsScore < rhsScore
+        }
+
+        if lhs.frame.origin.y != rhs.frame.origin.y {
+            return lhs.frame.origin.y < rhs.frame.origin.y
+        }
+        if lhs.frame.origin.x != rhs.frame.origin.x {
+            return lhs.frame.origin.x < rhs.frame.origin.x
+        }
+        if lhs.frame.width != rhs.frame.width {
+            return lhs.frame.width < rhs.frame.width
+        }
+        return lhs.frame.height < rhs.frame.height
+    }
+
+    private static func frameDistanceScore(_ frame: CGRect, binding: AppBinding) -> CGFloat {
+        guard let target = binding.lastKnownFrame?.cgRect else { return 0 }
+        let dx = frame.midX - target.midX
+        let dy = frame.midY - target.midY
+        let dw = frame.width - target.width
+        let dh = frame.height - target.height
+        return abs(dx) + abs(dy) + abs(dw) + abs(dh)
     }
 }

@@ -6,6 +6,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private let windowMonitor = WindowMonitor()
     let hotkeyManager = HotkeyManager()
     private var barrierWindows: [UUID: BarrierWindow] = [:]  // keyed by slot UUID
+    private var monitoredBundleIDs: Set<String> = []
     private(set) var isHidden = false
     private let ownBundleID = Bundle.main.bundleIdentifier ?? "com.myscreen.app"
 
@@ -54,6 +55,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     func applyConfiguration() {
         Log.info("applyConfiguration called")
         removeAllBarrierWindows()
+        syncWindowMonitoring()
 
         for display in displayManager.displays {
             let layout = AppConfig.shared.layout(for: display.displayID)
@@ -77,14 +79,11 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
             for slot in activeSlots {
                 if let boundApp = slot.boundApp, let slotResult = result.slotResults[slot.id] {
-                    windowMonitor.monitorApp(bundleIdentifier: boundApp.bundleIdentifier)
                     let apps = NSRunningApplication.runningApplications(withBundleIdentifier: boundApp.bundleIdentifier)
                     for app in apps { if app.isHidden { app.unhide() } }
 
-                    let targetRect = slotResult.reservedRect
-                    let bundleID = boundApp.bundleIdentifier
                     DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) { [weak self] in
-                        self?.moveBoundApp(bundleIdentifier: bundleID, to: targetRect)
+                        self?.moveBoundWindow(binding: boundApp, to: slotResult.reservedRect)
                     }
                 }
             }
@@ -94,16 +93,17 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
                 let workArea = result.workAreaRect
                 let reservedAreas = buildReservedAreas(layout: layout, result: result)
                 let excluded = excludedBundleIDs()
-                constrainWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: excluded)
+                constrainWindows(displayFrame: display.frame, workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: excluded)
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                     guard let self = self else { return }
-                    self.constrainWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: excluded)
+                    self.constrainWindows(displayFrame: display.frame, workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: excluded)
                 }
             }
         }
 
         // Boost polling so subsequent window movements are caught quickly
         windowMonitor.boostPolling()
+        notifyBindingStateChange()
     }
 
     // MARK: - F-014: Animated Visibility Toggle
@@ -131,7 +131,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
                 }
                 if let boundApp = slot.boundApp {
                     DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration * 0.5) { [weak self] in
-                        self?.hideBoundApp(bundleIdentifier: boundApp.bundleIdentifier)
+                        self?.hideBoundWindow(binding: boundApp)
                     }
                 }
             }
@@ -162,13 +162,10 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
                 }
 
                 if let boundApp = slot.boundApp {
-                    windowMonitor.monitorApp(bundleIdentifier: boundApp.bundleIdentifier)
                     let apps = NSRunningApplication.runningApplications(withBundleIdentifier: boundApp.bundleIdentifier)
                     for app in apps { if app.isHidden { app.unhide() } }
-                    let targetRect = slotResult.reservedRect
-                    let bundleID = boundApp.bundleIdentifier
                     DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration * 0.3) { [weak self] in
-                        self?.moveBoundApp(bundleIdentifier: bundleID, to: targetRect)
+                        self?.moveBoundWindow(binding: boundApp, to: slotResult.reservedRect)
                     }
                 }
             }
@@ -177,7 +174,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
             let reservedAreas = buildReservedAreas(layout: layout, result: result)
             DispatchQueue.main.asyncAfter(deadline: .now() + animationDuration + 0.1) { [weak self] in
                 guard let self = self else { return }
-                self.constrainWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: self.excludedBundleIDs())
+                self.constrainWindows(displayFrame: display.frame, workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: self.excludedBundleIDs())
             }
         }
     }
@@ -209,7 +206,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         var foundDisplayID: CGDirectDisplayID?
         var foundLayout: ScreenLayout?
         for display in displayManager.displays {
-            var layout = AppConfig.shared.layout(for: display.displayID)
+            let layout = AppConfig.shared.layout(for: display.displayID)
             if layout.slot(for: slotID) != nil {
                 foundDisplayID = display.displayID
                 foundLayout = layout
@@ -248,16 +245,17 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         }
 
         if let boundApp = slot.boundApp {
-            moveBoundApp(bundleIdentifier: boundApp.bundleIdentifier, to: slotResult.reservedRect)
+            moveBoundWindow(binding: boundApp, to: slotResult.reservedRect)
         }
 
         let reservedAreas = buildReservedAreas(layout: updatedLayout, result: result)
-        constrainWindows(workArea: result.workAreaRect, reservedAreas: reservedAreas, excludedBundleIDs: excludedBundleIDs())
+        constrainWindows(displayFrame: display.frame, workArea: result.workAreaRect, reservedAreas: reservedAreas, excludedBundleIDs: excludedBundleIDs())
     }
 
     // MARK: - WindowMonitorDelegate
 
     func windowMonitorDidDetectChange(_ monitor: WindowMonitor) {
+        notifyBindingStateChange()
         guard !isHidden else { return }
         constrainDebounceTimer?.invalidate()
         constrainDebounceTimer = Timer.scheduledTimer(withTimeInterval: 0.3, repeats: false) { [weak self] _ in
@@ -277,22 +275,19 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
             let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, slots: layout.slots)
             let reservedAreas = buildReservedAreas(layout: layout, result: result)
-            constrainWindows(workArea: result.workAreaRect, reservedAreas: reservedAreas, excludedBundleIDs: excludedBundleIDs())
+            constrainWindows(displayFrame: display.frame, workArea: result.workAreaRect, reservedAreas: reservedAreas, excludedBundleIDs: excludedBundleIDs())
 
             for slot in activeSlots {
                 guard let boundApp = slot.boundApp, let slotResult = result.slotResults[slot.id] else { continue }
                 if mouseDown { continue }
-                let axWindows = WindowController.windows(for: boundApp.bundleIdentifier)
-                for window in axWindows {
-                    guard WindowController.isMovable(window),
-                          WindowController.isMainWindow(window),
-                          let currentFrame = WindowController.getFrame(window) else { continue }
-                    if !rectsApproximatelyEqual(currentFrame, slotResult.reservedRect, tolerance: 5) {
-                        WindowController.setFrame(window, to: slotResult.reservedRect)
-                    }
+                if let window = WindowController.bestWindow(for: boundApp),
+                   let currentFrame = WindowController.getFrame(window),
+                   !rectsApproximatelyEqual(currentFrame, slotResult.reservedRect, tolerance: 5) {
+                    WindowController.setFrame(window, to: slotResult.reservedRect)
                 }
             }
         }
+        notifyBindingStateChange()
     }
 
     // MARK: - Global Mouse-Up Monitor
@@ -323,17 +318,14 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
             let result = LayoutEngine.calculate(screenFrame: display.visibleFrame, slots: layout.slots)
             for slot in activeSlots {
                 guard let boundApp = slot.boundApp, let slotResult = result.slotResults[slot.id] else { continue }
-                let axWindows = WindowController.windows(for: boundApp.bundleIdentifier)
-                for window in axWindows {
-                    guard WindowController.isMovable(window),
-                          WindowController.isMainWindow(window),
-                          let currentFrame = WindowController.getFrame(window) else { continue }
-                    if !rectsApproximatelyEqual(currentFrame, slotResult.reservedRect, tolerance: 5) {
-                        WindowController.setFrame(window, to: slotResult.reservedRect)
-                    }
+                if let window = WindowController.bestWindow(for: boundApp),
+                   let currentFrame = WindowController.getFrame(window),
+                   !rectsApproximatelyEqual(currentFrame, slotResult.reservedRect, tolerance: 5) {
+                    WindowController.setFrame(window, to: slotResult.reservedRect)
                 }
             }
         }
+        notifyBindingStateChange()
     }
 
     func displayManagerDidDetectChange(_ manager: DisplayManager) {
@@ -416,14 +408,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
 
     /// Convert NSScreen frame (bottom-left origin) to CG frame (top-left origin).
     private func screenToCG(_ nsFrame: NSRect) -> CGRect {
-        guard let mainScreen = NSScreen.screens.first else { return nsFrame }
-        let mainHeight = mainScreen.frame.height
-        return CGRect(
-            x: nsFrame.origin.x,
-            y: mainHeight - nsFrame.origin.y - nsFrame.height,
-            width: nsFrame.width,
-            height: nsFrame.height
-        )
+        CoordinateConverter.nsToCG(nsFrame)
     }
 
     // MARK: - Helpers
@@ -439,22 +424,27 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         }
     }
 
-    private func moveBoundApp(bundleIdentifier: String, to rect: CGRect) {
-        let axWindows = WindowController.windows(for: bundleIdentifier)
-        for window in axWindows {
-            guard WindowController.isMovable(window),
-                  WindowController.isMainWindow(window) else { continue }
-            WindowController.setFrame(window, to: rect)
+    private func moveBoundWindow(binding: AppBinding, to rect: CGRect) {
+        guard let window = WindowController.bestWindow(for: binding) else { return }
+        if WindowController.isMinimized(window) {
+            _ = WindowController.setMinimized(window, to: false)
         }
+        WindowController.setFrame(window, to: rect)
     }
 
-    private func hideBoundApp(bundleIdentifier: String) {
-        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleIdentifier)
+    private func hideBoundWindow(binding: AppBinding) {
+        if binding.isWindowSpecific,
+           let window = WindowController.bestWindow(for: binding),
+           WindowController.setMinimized(window, to: true) {
+            return
+        }
+
+        let apps = NSRunningApplication.runningApplications(withBundleIdentifier: binding.bundleIdentifier)
         for app in apps { app.hide() }
     }
 
-    private func constrainWindows(workArea: CGRect, reservedAreas: [(rect: CGRect, edge: EdgePosition)], excludedBundleIDs: Set<String>) {
-        WorkAreaConstraint.constrainAllWindows(workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: excludedBundleIDs, ownBundleID: ownBundleID)
+    private func constrainWindows(displayFrame: CGRect, workArea: CGRect, reservedAreas: [(rect: CGRect, edge: EdgePosition)], excludedBundleIDs: Set<String>) {
+        WorkAreaConstraint.constrainAllWindows(displayFrame: displayFrame, workArea: workArea, reservedAreas: reservedAreas, excludedBundleIDs: excludedBundleIDs, ownBundleID: ownBundleID)
     }
 
     private func excludedBundleIDs() -> Set<String> {
@@ -476,5 +466,38 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private func rectsApproximatelyEqual(_ a: CGRect, _ b: CGRect, tolerance: CGFloat) -> Bool {
         abs(a.origin.x - b.origin.x) < tolerance && abs(a.origin.y - b.origin.y) < tolerance &&
         abs(a.width - b.width) < tolerance && abs(a.height - b.height) < tolerance
+    }
+
+    private func syncWindowMonitoring() {
+        let desiredBundleIDs = boundBundleIDs()
+
+        for bundleID in monitoredBundleIDs.subtracting(desiredBundleIDs) {
+            windowMonitor.unmonitorApp(bundleIdentifier: bundleID)
+        }
+
+        for bundleID in desiredBundleIDs.subtracting(monitoredBundleIDs) {
+            windowMonitor.monitorApp(bundleIdentifier: bundleID)
+        }
+
+        monitoredBundleIDs = desiredBundleIDs
+    }
+
+    private func boundBundleIDs() -> Set<String> {
+        var bundleIDs: Set<String> = []
+
+        for display in displayManager.displays {
+            let layout = AppConfig.shared.layout(for: display.displayID)
+            for slot in layout.slots where slot.isActive {
+                if let bundleID = slot.boundApp?.bundleIdentifier {
+                    bundleIDs.insert(bundleID)
+                }
+            }
+        }
+
+        return bundleIDs
+    }
+
+    private func notifyBindingStateChange() {
+        NotificationCenter.default.post(name: .myScreenBindingStateDidChange, object: nil)
     }
 }

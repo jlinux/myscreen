@@ -70,14 +70,7 @@ final class BarrierWindow: NSWindow {
     }
 
     static func cgToNS(_ cgRect: CGRect) -> NSRect {
-        guard let mainScreen = NSScreen.screens.first else { return cgRect }
-        let mainHeight = mainScreen.frame.height
-        return NSRect(
-            x: cgRect.origin.x,
-            y: mainHeight - cgRect.origin.y - cgRect.height,
-            width: cgRect.width,
-            height: cgRect.height
-        )
+        CoordinateConverter.cgToNS(cgRect)
     }
 }
 

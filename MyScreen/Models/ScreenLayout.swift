@@ -34,7 +34,7 @@ struct ScreenLayout: Codable, Equatable {
         get { slots.contains(where: { $0.isActive }) }
     }
 
-    /// Edges already used by active slots
+    /// Edges already used by existing slots.
     var usedEdges: Set<EdgePosition> {
         Set(slots.map { $0.reservedArea.edge })
     }
@@ -66,5 +66,11 @@ struct ScreenLayout: Codable, Equatable {
 
     func slot(for id: UUID) -> ReservedSlot? {
         slots.first { $0.id == id }
+    }
+
+    func canUseEdge(_ edge: EdgePosition, excluding slotID: UUID? = nil) -> Bool {
+        !slots.contains { slot in
+            slot.id != slotID && slot.reservedArea.edge == edge
+        }
     }
 }

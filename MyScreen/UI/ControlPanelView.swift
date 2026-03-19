@@ -106,6 +106,7 @@ struct ControlPanelView: View {
                     SlotCardView(
                         slot: slot,
                         isExpanded: viewModel.expandedSlotID == slot.id,
+                        isBindingMissing: viewModel.bindingMissing(for: slot.id),
                         usedEdges: viewModel.usedEdges(excluding: slot.id),
                         viewModel: viewModel
                     )
@@ -134,8 +135,9 @@ struct ControlPanelView: View {
         .onAppear { viewModel.refresh() }
         .sheet(isPresented: $viewModel.showAppPicker) {
             AppPickerView(
+                initialBundleIdentifier: viewModel.preferredBundleIdentifierForPicker,
                 onSelect: { viewModel.bindApp($0) },
-                onCancel: { viewModel.showAppPicker = false }
+                onCancel: { viewModel.cancelAppPicker() }
             )
         }
     }
@@ -144,8 +146,16 @@ struct ControlPanelView: View {
 // MARK: - Slot Card
 
 private struct SlotCardView: View {
+    private enum BindingStatus {
+        case disabled
+        case unbound
+        case missing
+        case bound
+    }
+
     let slot: ReservedSlot
     let isExpanded: Bool
+    let isBindingMissing: Bool
     let usedEdges: Set<EdgePosition>
     @ObservedObject var viewModel: ControlPanelViewModel
 
@@ -154,6 +164,67 @@ private struct SlotCardView: View {
         case .pixels(let v): return "\(Int(v))px"
         case .percentage(let v): return "\(Int(v * 100))%"
         }
+    }
+
+    private var bindingStatus: BindingStatus {
+        if !slot.isActive { return .disabled }
+        if slot.boundApp == nil { return .unbound }
+        if isBindingMissing { return .missing }
+        return .bound
+    }
+
+    private var statusTitle: String {
+        switch bindingStatus {
+        case .disabled: return "Disabled"
+        case .unbound: return "Unbound"
+        case .missing: return "Needs Rebind"
+        case .bound: return "Bound"
+        }
+    }
+
+    private var statusIcon: String {
+        switch bindingStatus {
+        case .disabled: return "pause.circle.fill"
+        case .unbound: return "circle.dashed"
+        case .missing: return "exclamationmark.triangle.fill"
+        case .bound: return "checkmark.circle.fill"
+        }
+    }
+
+    private var statusTint: Color {
+        switch bindingStatus {
+        case .disabled: return .secondary
+        case .unbound: return .secondary
+        case .missing: return .orange
+        case .bound: return .green
+        }
+    }
+
+    private var statusDescription: String {
+        switch bindingStatus {
+        case .disabled:
+            return "This reserved area is turned off. Turn it back on to apply the layout and binding."
+        case .unbound:
+            return "No window is linked yet. Pick a target window if this area should auto-move or hide something."
+        case .missing:
+            return "The previously linked window is not currently available. Rebind it or reopen that window."
+        case .bound:
+            return "This reserved area is actively tracking the selected window and will manage it automatically."
+        }
+    }
+
+    @ViewBuilder
+    private var statusBadge: some View {
+        Label(statusTitle, systemImage: statusIcon)
+            .font(.caption2)
+            .fontWeight(.medium)
+            .foregroundColor(statusTint)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(statusTint.opacity(0.12))
+            )
     }
 
     var body: some View {
@@ -182,10 +253,12 @@ private struct SlotCardView: View {
                         .font(.caption)
                         .foregroundColor(.secondary)
 
+                    statusBadge
+
                     Spacer()
 
                     if let app = slot.boundApp {
-                        Text(app.displayName)
+                        Text(app.displayLabel)
                             .font(.caption)
                             .foregroundColor(.secondary)
                             .lineLimit(1)
@@ -222,6 +295,7 @@ private struct SlotCardView: View {
                             ForEach(EdgePosition.allCases, id: \.self) { edge in
                                 Text(edge.rawValue.capitalized)
                                     .tag(edge)
+                                    .disabled(usedEdges.contains(edge) && edge != slot.reservedArea.edge)
                             }
                         }
                         .pickerStyle(.segmented)
@@ -271,7 +345,7 @@ private struct SlotCardView: View {
                         Spacer()
                         if let app = slot.boundApp {
                             HStack(spacing: 4) {
-                                Text(app.displayName)
+                                Text(app.displayLabel)
                                     .font(.caption)
                                     .lineLimit(1)
                                 Button {
@@ -285,9 +359,42 @@ private struct SlotCardView: View {
                             }
                         }
                         Button(slot.boundApp == nil ? "Select" : "Change") {
-                            viewModel.showAppPickerForSlot(slot.id)
+                            viewModel.showAppPickerForSlot(
+                                slot.id,
+                                preferredBundleIdentifier: slot.boundApp?.bundleIdentifier
+                            )
                         }
                         .controlSize(.mini)
+                    }
+
+                    VStack(alignment: .leading, spacing: 6) {
+                        HStack(alignment: .center, spacing: 8) {
+                            Text("Status")
+                                .font(.caption)
+                            Spacer()
+                            statusBadge
+                        }
+
+                        Text(statusDescription)
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+
+                        if bindingStatus == .missing {
+                            HStack(alignment: .center, spacing: 8) {
+                                Label("Bound window not found.", systemImage: "exclamationmark.triangle.fill")
+                                    .font(.caption)
+                                    .foregroundColor(.orange)
+                                Spacer()
+                                Button("Rebind") {
+                                    viewModel.showAppPickerForSlot(slot.id, preferredBundleIdentifier: slot.boundApp?.bundleIdentifier)
+                                }
+                                .controlSize(.mini)
+                            }
+                        } else if bindingStatus == .unbound {
+                            Text("Tip: binding a window lets MyScreen restore placement and keep the area aligned to that window.")
+                                .font(.caption2)
+                                .foregroundColor(Color(nsColor: .tertiaryLabelColor))
+                        }
                     }
 
                     // Remove button

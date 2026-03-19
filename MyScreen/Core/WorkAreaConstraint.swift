@@ -3,63 +3,39 @@ import AppKit
 
 /// Checks if windows intrude into reserved areas and clips them.
 enum WorkAreaConstraint {
+    private static func windowBelongsToDisplay(_ windowFrame: CGRect, displayFrame: CGRect) -> Bool {
+        let center = CGPoint(x: windowFrame.midX, y: windowFrame.midY)
+        return displayFrame.contains(center)
+    }
+
     /// Constrain a window frame to stay within the work area.
-    /// Clips from each reserved area edge. Returns nil if no adjustment needed.
+    /// Clamps the whole frame into the work area. Returns nil if no adjustment needed.
     static func constrainedFrame(
         windowFrame: CGRect,
         workArea: CGRect,
         reservedAreas: [(rect: CGRect, edge: EdgePosition)]
     ) -> CGRect? {
-        var newFrame = windowFrame
-        var changed = false
-
-        for (reservedRect, edge) in reservedAreas {
-            guard newFrame.intersects(reservedRect) else { continue }
-
-            switch edge {
-            case .right:
-                let maxX = workArea.maxX
-                if newFrame.maxX > maxX {
-                    newFrame.size.width = maxX - newFrame.origin.x
-                    changed = true
-                }
-            case .left:
-                let minX = workArea.minX
-                if newFrame.origin.x < minX {
-                    let overflow = minX - newFrame.origin.x
-                    newFrame.origin.x = minX
-                    newFrame.size.width -= overflow
-                    changed = true
-                }
-            case .bottom:
-                let maxY = workArea.maxY
-                if newFrame.maxY > maxY {
-                    newFrame.size.height = maxY - newFrame.origin.y
-                    changed = true
-                }
-            case .top:
-                let minY = workArea.minY
-                if newFrame.origin.y < minY {
-                    let overflow = minY - newFrame.origin.y
-                    newFrame.origin.y = minY
-                    newFrame.size.height -= overflow
-                    changed = true
-                }
-            }
+        let intrudesReservedArea = reservedAreas.contains { reservedRect, _ in
+            windowFrame.intersects(reservedRect)
         }
+        let exceedsWorkArea = !workArea.contains(windowFrame)
+        guard intrudesReservedArea || exceedsWorkArea else { return nil }
 
-        guard changed else { return nil }
+        let minWidth = min(CGFloat(100), workArea.width)
+        let minHeight = min(CGFloat(100), workArea.height)
 
-        // Ensure minimum size
-        newFrame.size.width = max(newFrame.size.width, 100)
-        newFrame.size.height = max(newFrame.size.height, 100)
+        let clampedWidth = min(max(windowFrame.width, minWidth), workArea.width)
+        let clampedHeight = min(max(windowFrame.height, minHeight), workArea.height)
+        let clampedX = min(max(windowFrame.origin.x, workArea.minX), workArea.maxX - clampedWidth)
+        let clampedY = min(max(windowFrame.origin.y, workArea.minY), workArea.maxY - clampedHeight)
 
-        if newFrame == windowFrame { return nil }
-        return newFrame
+        let newFrame = CGRect(x: clampedX, y: clampedY, width: clampedWidth, height: clampedHeight)
+        return newFrame == windowFrame ? nil : newFrame
     }
 
     /// Constrain all on-screen windows to the work area.
     static func constrainAllWindows(
+        displayFrame: CGRect,
         workArea: CGRect,
         reservedAreas: [(rect: CGRect, edge: EdgePosition)],
         excludedBundleIDs: Set<String>,
@@ -75,6 +51,7 @@ enum WorkAreaConstraint {
             }
 
             guard windowInfo.isOnScreen else { continue }
+            guard windowBelongsToDisplay(windowInfo.frame, displayFrame: displayFrame) else { continue }
 
             // Skip small windows (popups, tooltips, input method candidates, etc.)
             if windowInfo.frame.width < 150 || windowInfo.frame.height < 100 { continue }
