@@ -14,7 +14,10 @@ final class StatusBarController {
 
         statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
         if let button = statusItem?.button {
-            button.image = NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "MyScreen")
+            let image = NSImage(named: "StatusBarIcon")
+                ?? NSImage(systemSymbolName: "rectangle.split.2x1", accessibilityDescription: "MyScreen")
+            image?.isTemplate = true
+            button.image = image
             button.action = #selector(togglePopover)
             button.target = self
         }
