@@ -5,6 +5,8 @@ protocol BarrierWindowDelegate: AnyObject {
 }
 
 final class BarrierWindow: NSWindow {
+    static let preferredLevel: NSWindow.Level = .statusBar
+
     weak var resizeDelegate: BarrierWindowDelegate?
     var edge: EdgePosition = .right
     /// The actual reserved area size (not the divider strip size).
@@ -21,11 +23,12 @@ final class BarrierWindow: NSWindow {
             defer: false
         )
         self.edge = edge
-        level = .floating
+        level = Self.preferredLevel
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
         ignoresMouseEvents = false
+        hidesOnDeactivate = false
         alphaValue = 0.0  // Start invisible, fade in on hover
         collectionBehavior = [.canJoinAllSpaces, .stationary]
 
@@ -34,6 +37,9 @@ final class BarrierWindow: NSWindow {
         dividerView.barrierWindow = self
         contentView = dividerView
     }
+
+    override var canBecomeKey: Bool { false }
+    override var canBecomeMain: Bool { false }
 
     func fadeIn(duration: TimeInterval = 0.2) {
         NSAnimationContext.runAnimationGroup { context in
@@ -71,6 +77,18 @@ final class BarrierWindow: NSWindow {
 
     static func cgToNS(_ cgRect: CGRect) -> NSRect {
         CoordinateConverter.cgToNS(cgRect)
+    }
+
+    func enforceTopmost(reason: String) {
+        if level != Self.preferredLevel {
+            level = Self.preferredLevel
+        }
+        orderFrontRegardless()
+        Log.info(
+            "Barrier enforceTopmost reason=\(reason) " +
+            "windowNumber=\(windowNumber) level=\(level.rawValue) " +
+            "visible=\(isVisible) onActiveSpace=\(isOnActiveSpace)"
+        )
     }
 }
 

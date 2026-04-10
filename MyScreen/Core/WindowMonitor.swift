@@ -38,6 +38,29 @@ final class WindowMonitor {
         NSWorkspace.shared.notificationCenter.removeObserver(self)
     }
 
+    /// Rebuild observers and reset polling state after the system wakes.
+    func recoverAfterWake() {
+        pollTimer?.invalidate()
+        pollTimer = nil
+        lastWindowSnapshot = [:]
+        unchangedCount = 0
+        currentInterval = Self.fastInterval
+
+        let bundleIDs = monitoredBundleIDs
+        removeAllObservers()
+
+        for bundleID in bundleIDs {
+            let apps = NSRunningApplication.runningApplications(withBundleIdentifier: bundleID)
+            for app in apps {
+                addObserver(for: app.processIdentifier)
+            }
+        }
+
+        Log.info("WindowMonitor recovered after wake, bundleIDs=\(bundleIDs.sorted()) observers=\(observers.count)")
+        scheduleNextPoll()
+        delegate?.windowMonitorDidDetectChange(self)
+    }
+
     /// Monitor a specific app for real-time window changes via AXObserver.
     func monitorApp(bundleIdentifier: String) {
         monitoredBundleIDs.insert(bundleIdentifier)

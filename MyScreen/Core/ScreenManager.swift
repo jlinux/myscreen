@@ -17,6 +17,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
     private var wakeObserver: NSObjectProtocol?
     private var mouseUpMonitor: Any?
     private var visibilityTransitionID: UInt = 0
+    private var wakeRecoveryWorkItem: DispatchWorkItem?
 
     func start() {
         Log.info("ScreenManager starting")
@@ -36,16 +37,16 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         wakeObserver = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didWakeNotification,
             object: nil, queue: .main
-        ) { _ in
-            DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
-                BrightnessManager.shared.reapplySoftwareGamma()
-            }
+        ) { [weak self] _ in
+            self?.handleWakeNotification()
         }
     }
 
     func stop() {
         constrainDebounceTimer?.invalidate()
         constrainDebounceTimer = nil
+        wakeRecoveryWorkItem?.cancel()
+        wakeRecoveryWorkItem = nil
         stopMouseUpMonitor()
         stopFullScreenMonitoring()
         if let obs = wakeObserver { NSWorkspace.shared.notificationCenter.removeObserver(obs) }
@@ -75,7 +76,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
                     barrier.slotID = slot.id
                     barrier.reservedAreaSize = reservedSize
                     barrier.resizeDelegate = self
-                    barrier.orderFront(nil)
+                    barrier.enforceTopmost(reason: "applyConfiguration")
                     barrierWindows[slot.id] = barrier
                 }
             }
@@ -179,7 +180,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
                 barrier.reservedAreaSize = reservedSize
                 barrier.resizeDelegate = self
                 barrier.alphaValue = 1.0  // Visible during slide-in animation
-                barrier.orderFront(nil)
+                barrier.enforceTopmost(reason: "animateShow")
                 barrierWindows[slot.id] = barrier
                 barrier.animateFrame(to: slotResult.dividerRect, duration: animationDuration) {
                     barrier.fadeOut(duration: 0.5)
@@ -357,6 +358,44 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         notifyBindingStateChange()
     }
 
+    // MARK: - Wake Recovery
+
+    private func handleWakeNotification() {
+        Log.info("didWakeNotification received, scheduling recovery")
+        wakeRecoveryWorkItem?.cancel()
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.performWakeRecovery()
+        }
+        wakeRecoveryWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0, execute: workItem)
+    }
+
+    private func performWakeRecovery() {
+        wakeRecoveryWorkItem = nil
+        Log.info("Wake recovery started, isHidden=\(isHidden)")
+
+        displayManager.refresh()
+        BrightnessManager.shared.reapplySoftwareGamma()
+        windowMonitor.recoverAfterWake()
+        windowMonitor.boostPolling()
+
+        guard !isHidden else {
+            Log.info("Wake recovery skipped barrier rebuild because reserved areas are hidden")
+            return
+        }
+
+        applyConfiguration()
+
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) { [weak self] in
+            guard let self = self else { return }
+            Log.info("Wake recovery follow-up: full-screen check and bound app reposition")
+            self.windowMonitor.boostPolling()
+            self.repositionBoundApps()
+            self.checkFullScreenState()
+        }
+    }
+
     func displayManagerDidDetectChange(_ manager: DisplayManager) {
         applyConfiguration()
     }
@@ -401,7 +440,7 @@ final class ScreenManager: WindowMonitorDelegate, DisplayManagerDelegate, Barrie
         } else {
             for (_, barrier) in barrierWindows {
                 barrier.alphaValue = 0.0  // Stay invisible until hovered
-                barrier.orderFront(nil)
+                barrier.enforceTopmost(reason: "checkFullScreenState.restore")
             }
         }
     }
