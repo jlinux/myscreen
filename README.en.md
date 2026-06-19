@@ -4,6 +4,29 @@
 
 MyScreen is a native macOS menu bar app that reserves screen-edge areas for selected windows and keeps other windows inside the remaining workspace. It is designed for workflows that need a persistent iPhone Mirroring window, chat window, monitoring panel, reference document, or any other auxiliary window.
 
+## Diagram
+
+The example below shows a left reserved area: the bound window stays on the left, while other application windows are constrained to the workspace on the right.
+
+```mermaid
+flowchart LR
+    subgraph screen["macOS Display"]
+        direction LR
+        reserved["Reserved Area<br/>Bound Window<br/>iPhone Mirroring / Chat / Dashboard"]
+        divider["Draggable Divider"]
+        workspace["Workspace<br/>Other App Windows<br/>Xcode / Browser / Notes"]
+    end
+
+    reserved --- divider --- workspace
+
+    classDef reserved fill:#e8f3ff,stroke:#2563eb,color:#172554,stroke-width:2px
+    classDef divider fill:#f8fafc,stroke:#64748b,color:#334155,stroke-dasharray:4 3
+    classDef workspace fill:#f7fee7,stroke:#65a30d,color:#1a2e05,stroke-width:2px
+    class reserved reserved
+    class divider divider
+    class workspace workspace
+```
+
 ## Features
 
 - **Reserved screen areas**: Create reserved areas on the left, right, top, or bottom edge of a display.

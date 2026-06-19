@@ -4,6 +4,29 @@
 
 MyScreen 是一款原生 macOS 菜单栏应用，用来把屏幕边缘保留给指定窗口，并把其他窗口限制在剩余工作区内。它适合需要长期保留 iPhone 镜像、聊天窗口、监控面板、参考资料或其他辅助窗口的工作流。
 
+## 示意图
+
+下面以“左侧保留区”为例：绑定窗口会持续停留在左侧，其他应用窗口会被限制在右侧工作区内。
+
+```mermaid
+flowchart LR
+    subgraph screen["macOS Display"]
+        direction LR
+        reserved["Reserved Area<br/>Bound Window<br/>iPhone Mirroring / Chat / Dashboard"]
+        divider["Draggable Divider"]
+        workspace["Workspace<br/>Other App Windows<br/>Xcode / Browser / Notes"]
+    end
+
+    reserved --- divider --- workspace
+
+    classDef reserved fill:#e8f3ff,stroke:#2563eb,color:#172554,stroke-width:2px
+    classDef divider fill:#f8fafc,stroke:#64748b,color:#334155,stroke-dasharray:4 3
+    classDef workspace fill:#f7fee7,stroke:#65a30d,color:#1a2e05,stroke-width:2px
+    class reserved reserved
+    class divider divider
+    class workspace workspace
+```
+
 ## 功能
 
 - **屏幕保留区**：在显示器的左、右、上、下边缘创建保留区域。
